@@ -2,6 +2,12 @@
 name = "responses"
 version = "0.1.0"
 edition = "2024"
+description = "Rust bindings to OpenAI's Responses API"
+repository = "https://github.com/dprkh/responses"
+license = "MIT"
+keywords = ["openai", "azure", "llm", "ai", "structured-outputs"]
+categories = ["api-bindings"]
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0"
