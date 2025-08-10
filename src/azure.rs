@@ -2,7 +2,7 @@ use std::env;
 
 use crate::{
     strategy::Strategy,
-    text,
+    structure, text,
     types::{CreateResponse, Output, Response},
 };
 
@@ -11,6 +11,10 @@ use anyhow::{Result, anyhow};
 use url::Url;
 
 use reqwest::Client as HttpClient;
+
+use schemars::JsonSchema;
+
+use serde::Deserialize;
 
 pub struct Options {
     pub api_key: String,
@@ -30,11 +34,17 @@ pub struct Azure {
 
 impl Azure {
     pub fn from_env() -> Self {
-        let api_key = env::var("AZURE_OPENAI_API_KEY").unwrap();
+        let api_key = env::var("AZURE_OPENAI_API_KEY")
+            //
+            .expect("AZURE_OPENAI_API_KEY");
 
-        let api_version = env::var("AZURE_OPENAI_API_VERSION").unwrap();
+        let api_version = env::var("AZURE_OPENAI_API_VERSION")
+            //
+            .expect("AZURE_OPENAI_API_VERSION");
 
-        let resource = env::var("AZURE_OPENAI_RESOURCE").unwrap();
+        let resource = env::var("AZURE_OPENAI_RESOURCE")
+            //
+            .expect("AZURE_OPENAI_RESOURCE");
 
         let options = Options {
             api_key,
@@ -47,8 +57,19 @@ impl Azure {
         options.try_into().unwrap()
     }
 
-    pub async fn text(&self, options: text::Options) -> Result<text::Response> {
+    pub async fn text(&self, options: crate::Options) -> Result<crate::Response<String>> {
         text::text(self, options).await
+    }
+
+    pub async fn structure<T>(
+        &self,
+        name: String,
+        options: crate::Options,
+    ) -> Result<crate::Response<T>>
+    where
+        T: JsonSchema + for<'a> Deserialize<'a>,
+    {
+        structure::structure(self, name, options).await
     }
 }
 

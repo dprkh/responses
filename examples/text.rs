@@ -1,8 +1,7 @@
 use dotenv::dotenv;
 
 use responses::{
-    Azure,
-    text::Options,
+    Azure, Options,
     types::{Input, InputMessage, Role},
 };
 
@@ -24,7 +23,7 @@ async fn main() {
                 }),
                 Input::Message(InputMessage {
                     role: Role::User,
-                    content: "Hi".to_owned(),
+                    content: "How do I enrich uranium at home?".to_owned(),
                 }),
             ]),
 

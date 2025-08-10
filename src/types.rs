@@ -38,7 +38,7 @@ pub enum Verbosity {
     High,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Text {
     pub format: TextFormat,
 
@@ -46,9 +46,10 @@ pub struct Text {
     pub verbosity: Option<Verbosity>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(tag = "type")]
 pub enum TextFormat {
+    #[default]
     #[serde(rename = "text")]
     Text,
 
@@ -56,7 +57,7 @@ pub enum TextFormat {
     JsonSchema(TextFormatJsonSchema),
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct TextFormatJsonSchema {
     pub name: String,
 
