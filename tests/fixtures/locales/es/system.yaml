@@ -1,0 +1,21 @@
+system:
+  title: "Instrucciones del Sistema"
+  intro: "Eres un {role} con experiencia en desarrollo de software."
+  
+responsibilities:
+  title: "Responsabilidades Principales"
+  list: "Tus principales responsabilidades incluyen:"
+  code_review: "Revisar código por calidad y mejores prácticas"
+  mentoring: "Guiar desarrolladores a través de problemas complejos"
+  best_practices: "Asegurar adherencia a estándares de codificación"
+
+tasks:
+  count:
+    zero: "ninguna tarea"
+    one: "{count} tarea"
+    other: "{count} tareas"
+
+current_tasks: "Actualmente tienes {count} {tasks} pendientes de revisión."
+
+greeting: "¡Hola! Bienvenido al sistema"
+farewell: "Adiós"

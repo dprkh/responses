@@ -1,0 +1,5 @@
+system:
+  title: "تعليمات النظام"
+  intro: "أنت {role} ذو خبرة في تطوير البرمجيات."
+
+text_direction: "rtl"

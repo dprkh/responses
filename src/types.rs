@@ -83,9 +83,10 @@ pub struct ToolFunction {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    pub schema: Schema,
+    pub parameters: Schema,
 
-    pub strict: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize)]
@@ -100,7 +101,7 @@ pub enum ToolChoice {
     Required,
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum Role {
     #[serde(rename = "user")]
     User,

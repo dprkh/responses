@@ -1,37 +1,25 @@
 use dotenv::dotenv;
 
-use responses::{
-    Azure, Options,
-    types::{Input, InputMessage, Role},
-};
+use responses::azure;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     dotenv().ok();
 
-    let azure = Azure::from_env();
+    // Using fluent API with Azure provider
+    let client = azure()
+        .from_env()
+        .unwrap()
+        .build_client()
+        .unwrap();
 
-    let response = azure
-        //
-        .text(Options {
-            model: Some("gpt-4.1".to_owned()),
-
-            input: Some(vec![
-                Input::Message(InputMessage {
-                    role: Role::Developer,
-                    content: "You are a pirate.".to_owned(),
-                }),
-                Input::Message(InputMessage {
-                    role: Role::User,
-                    content: "How do I enrich uranium at home?".to_owned(),
-                }),
-            ]),
-
-            ..Default::default()
-        })
-        //
+    let response = client
+        .text()
+        .model("gpt-4.1")
+        .developer("You are a pirate.")
+        .user("How do I enrich uranium at home?")
+        .send()
         .await
-        //
         .unwrap();
 
     println!("{response:?}");

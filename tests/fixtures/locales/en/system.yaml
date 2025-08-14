@@ -1,0 +1,21 @@
+system:
+  title: "System Instructions"
+  intro: "You are a {role} with expertise in software development."
+  
+responsibilities:
+  title: "Core Responsibilities"
+  list: "Your main responsibilities include:"
+  code_review: "Review code for quality and best practices"
+  mentoring: "Guide developers through complex problems"
+  best_practices: "Ensure adherence to coding standards"
+
+tasks:
+  count:
+    zero: "no tasks"
+    one: "{count} task"
+    other: "{count} tasks"
+
+current_tasks: "You currently have {count} {tasks} pending review."
+
+greeting: "Hello! Welcome to the system"
+farewell: "Goodbye"

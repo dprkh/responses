@@ -1,9 +1,8 @@
 use crate::{
+    error::{Error, Result},
     Refusal, Response,
     types::{Output, OutputMessage, OutputMessageContent, Role},
 };
-
-use anyhow::{Result, ensure};
 
 pub fn output_to_response(output: Vec<Output>) -> Result<Response<String>> {
     let mut text: Option<String> = None;
@@ -17,37 +16,42 @@ pub fn output_to_response(output: Vec<Output>) -> Result<Response<String>> {
             Output::Message(message) => {
                 let OutputMessage { role, content } = message;
 
-                ensure!(
-                    matches!(role, Role::Assistant),
-                    "output message role must be assistant"
-                );
+                if !matches!(role, Role::Assistant) {
+                    return Err(Error::InvalidResponse(
+                        "Output message role must be assistant".to_string()
+                    ));
+                }
 
                 for item in content {
                     match item {
                         OutputMessageContent::OutputText(value) => {
-                            ensure!(
-                                text.is_none(),
-                                "output message content must contain at most one text"
-                            );
+                            if text.is_some() {
+                                return Err(Error::InvalidResponse(
+                                    "Output message content must contain at most one text".to_string()
+                                ));
+                            }
 
-                            ensure!(
-                                refusal.is_none(),
-                                "output message content must not contain text and refusal at the same time"
-                            );
+                            if refusal.is_some() {
+                                return Err(Error::InvalidResponse(
+                                    "Output message content must not contain text and refusal at the same time".to_string()
+                                ));
+                            }
 
                             text.replace(value.text);
                         }
 
                         OutputMessageContent::Refusal(value) => {
-                            ensure!(
-                                refusal.is_none(),
-                                "output message content must contain at most one refusal"
-                            );
+                            if refusal.is_some() {
+                                return Err(Error::InvalidResponse(
+                                    "Output message content must contain at most one refusal".to_string()
+                                ));
+                            }
 
-                            ensure!(
-                                text.is_none(),
-                                "output message content must not contain text and refusal at the same time"
-                            );
+                            if text.is_some() {
+                                return Err(Error::InvalidResponse(
+                                    "Output message content must not contain text and refusal at the same time".to_string()
+                                ));
+                            }
 
                             refusal.replace(value.refusal);
                         }

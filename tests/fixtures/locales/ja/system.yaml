@@ -1,0 +1,13 @@
+system:
+  title: "システム指示"
+  intro: "あなたはソフトウェア開発の専門知識を持つ{role}です。"
+  
+responsibilities:
+  title: "主な責任"
+  list: "主な責任は以下のとおりです："
+  code_review: "品質とベストプラクティスのためのコードレビュー"
+  mentoring: "複雑な問題を通じて開発者を指導"
+  best_practices: "コーディング標準への準拠を確保"
+
+greeting: "こんにちは！システムへようこそ"
+farewell: "さようなら"

@@ -1,0 +1,6 @@
+system:
+  title: "Systemanweisungen"
+  intro: "Sie sind ein {role} mit Expertise in der Softwareentwicklung."
+
+greeting: "Hallo! Willkommen im System"
+farewell: "Auf Wiedersehen"
