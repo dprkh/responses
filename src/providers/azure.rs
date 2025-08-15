@@ -149,7 +149,7 @@ impl AzureConfigBuilder {
         self
     }
     
-    pub fn build(self) -> Result<AzureBuilder> {
+    pub fn build(self) -> Result<AzureProvider> {
         let api_key = self.api_key.ok_or_else(|| {
             Error::Config("API key is required".to_string())
         })?;
@@ -158,7 +158,7 @@ impl AzureConfigBuilder {
             Error::Config("Resource name is required".to_string())
         })?;
         
-        let api_version = self.api_version.unwrap_or_else(|| "2024-02-15-preview".to_string());
+        let api_version = self.api_version.unwrap_or_else(|| "2025-03-01-preview".to_string());
         
         let config = AzureConfig {
             api_key,
@@ -166,7 +166,7 @@ impl AzureConfigBuilder {
             api_version,
         };
         
-        Ok(AzureBuilder::new().with_config(config))
+        AzureProvider::new(config)
     }
 }
 

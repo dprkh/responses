@@ -150,11 +150,11 @@ impl AzureConfigBuilder {
     /// Set the Azure OpenAI resource name
     pub fn resource<S: Into<String>>(self, resource: S) -> Self;
     
-    /// Set the API version (defaults to "2024-02-15-preview" if not specified)
+    /// Set the API version (defaults to "2025-03-01-preview" if not specified)
     pub fn api_version<S: Into<String>>(self, api_version: S) -> Self;
     
-    /// Build the configured AzureBuilder
-    pub fn build(self) -> Result<AzureBuilder>;
+    /// Build the configured AzureProvider
+    pub fn build(self) -> Result<AzureProvider>;
 }
 ```
 
@@ -169,7 +169,6 @@ let provider = azure()
     .api_key("your-api-key")
     .resource("your-resource")
     .api_version("2025-03-01-preview")
-    .build()?  // Returns AzureBuilder
     .build()?; // Returns AzureProvider
 
 let client = Client::new(provider);
