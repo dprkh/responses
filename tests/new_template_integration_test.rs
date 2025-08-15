@@ -207,7 +207,8 @@ variables:
 Main content
 {{> shared/greeting.md}}"#;
         
-        let template = PromptTemplate::from_content(template_content).unwrap();
+        let template = PromptTemplate::from_content(template_content).unwrap()
+            .with_locale("en").unwrap();
         let vars = serde_json::json!({"name": "Alice"});
         
         // This should resolve shared/greeting.md relative to the base path
@@ -272,8 +273,9 @@ Main content for {{user_name}}.
 
 {{> shared/footer.md}}"#;
 
-        let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap();
-        let vars = serde_json::json!({"user_name": "Bob"});
+        let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap()
+            .with_locale("en").unwrap();
+        let vars = serde_json::json!({"user_name": "Bob", "locale": "en", "version": "1.0.0"});
         
         // With auto-loading, includes should be preloaded and available
         let result = template.render_with_base_path(&vars, Some(std::path::PathBuf::from("tests/fixtures/templates")));
@@ -333,11 +335,12 @@ This should detect circular references:
         let template_content = r#"---
 variables:
   greeting_type: "formal"
-i18n_key: "system.greeting"
+i18n_key: "system.title"
 ---
-{{i18n "system.greeting"}}: Welcome to our {{greeting_type}} system."#;
+{{i18n "system.title"}}: Welcome to our {{greeting_type}} system."#;
 
-        let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap();
+        let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap()
+            .with_locale("en").unwrap();
         let vars = serde_json::json!({"greeting_type": "professional"});
         
         // Should render with appropriate locale-based content
@@ -382,11 +385,16 @@ Fallback content: {{i18n "nonexistent.key"}}"#;
         let vars = serde_json::json!({});
         
         let result = template.render(&vars);
-        assert!(result.is_ok());
+        // With strict error handling, missing i18n keys should return errors
+        assert!(result.is_err());
         
-        let rendered = result.unwrap();
-        // Should gracefully handle missing i18n keys
-        assert!(rendered.contains("Fallback content:"));
+        match result.unwrap_err() {
+            responses::Error::I18nKeyNotFound { key, locale } => {
+                assert_eq!(key, "nonexistent.key");
+                assert_eq!(locale, "en"); // default locale
+            }
+            e => panic!("Expected I18nKeyNotFound error, got: {:?}", e),
+        }
     }
 
     #[test]

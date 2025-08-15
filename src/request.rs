@@ -197,27 +197,76 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
     }
 
     // Internal helper methods
+    fn add_template(mut self, template_input: crate::types::TemplateInput) -> Self {
+        if self.options.input.is_none() {
+            self.options.input = Some(Vec::new());
+        }
+        
+        self.options.input
+            .as_mut()
+            .unwrap()
+            .push(Input::Template(template_input));
+        
+        self
+    }
+    
     fn system_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
-        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
-        let content = template_with_vars.render_with_vars()?;
-        Ok(self.system(content))
+        Ok(self.add_template(crate::types::TemplateInput {
+            role: crate::types::Role::System,
+            template,
+        }))
     }
 
     fn assistant_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
-        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
-        let content = template_with_vars.render_with_vars()?;
-        Ok(self.assistant(content))
+        Ok(self.add_template(crate::types::TemplateInput {
+            role: crate::types::Role::Assistant,
+            template,
+        }))
     }
 
-    fn apply_accumulated_variables_static(vars: &HashMap<String, serde_json::Value>, mut template: crate::prompt::PromptTemplate) -> crate::prompt::PromptTemplate {
-        for (key, value) in vars {
-            template = template.var(key, value.clone());
-        }
-        template
-    }
+    
 
     pub async fn send(self) -> Result<Response<String>> {
-        self.client.text_with_options(self.options).await
+        let Self { client, options, accumulated_variables, current_locale } = self;
+        let mut rendered_options = options;
+        
+        // Render templates if any exist
+        if let Some(ref inputs) = rendered_options.input {
+            let mut rendered_inputs = Vec::new();
+            
+            for input in inputs {
+                match input {
+                    Input::Message(_msg) => rendered_inputs.push(input.clone()),
+                    Input::Template(template_input) => {
+                        // Apply accumulated variables and locale to template
+                        let mut template = template_input.template.clone();
+                        
+                        // Apply accumulated variables
+                        for (key, value) in &accumulated_variables {
+                            template = template.var(key, value.clone());
+                        }
+                        
+                        // Apply current locale if set
+                        if let Some(ref locale) = current_locale {
+                            template = template.with_locale(locale)?;
+                        }
+                        
+                        // Render template
+                        let content = template.render_with_vars()?;
+                        
+                        // Create message from rendered content
+                        rendered_inputs.push(Input::Message(InputMessage {
+                            role: template_input.role.clone(),
+                            content,
+                        }));
+                    }
+                }
+            }
+            
+            rendered_options.input = Some(rendered_inputs);
+        }
+        
+        client.text_with_options(rendered_options).await
     }
 }
 
@@ -394,27 +443,76 @@ where
     }
 
     // Internal helper methods
+    fn add_template(mut self, template_input: crate::types::TemplateInput) -> Self {
+        if self.options.input.is_none() {
+            self.options.input = Some(Vec::new());
+        }
+        
+        self.options.input
+            .as_mut()
+            .unwrap()
+            .push(Input::Template(template_input));
+        
+        self
+    }
+    
     fn system_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
-        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
-        let content = template_with_vars.render_with_vars()?;
-        Ok(self.system(content))
+        Ok(self.add_template(crate::types::TemplateInput {
+            role: crate::types::Role::System,
+            template,
+        }))
     }
 
     fn assistant_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
-        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
-        let content = template_with_vars.render_with_vars()?;
-        Ok(self.assistant(content))
+        Ok(self.add_template(crate::types::TemplateInput {
+            role: crate::types::Role::Assistant,
+            template,
+        }))
     }
 
-    fn apply_accumulated_variables_static(vars: &HashMap<String, serde_json::Value>, mut template: crate::prompt::PromptTemplate) -> crate::prompt::PromptTemplate {
-        for (key, value) in vars {
-            template = template.var(key, value.clone());
-        }
-        template
-    }
+    
 
     pub async fn send(self) -> Result<Response<T>> {
-        self.client.structure_with_name_and_options(self.name, self.options).await
+        let Self { client, name, options, accumulated_variables, current_locale, .. } = self;
+        let mut rendered_options = options;
+        
+        // Render templates if any exist
+        if let Some(ref inputs) = rendered_options.input {
+            let mut rendered_inputs = Vec::new();
+            
+            for input in inputs {
+                match input {
+                    Input::Message(_msg) => rendered_inputs.push(input.clone()),
+                    Input::Template(template_input) => {
+                        // Apply accumulated variables and locale to template
+                        let mut template = template_input.template.clone();
+                        
+                        // Apply accumulated variables
+                        for (key, value) in &accumulated_variables {
+                            template = template.var(key, value.clone());
+                        }
+                        
+                        // Apply current locale if set
+                        if let Some(ref locale) = current_locale {
+                            template = template.with_locale(locale)?;
+                        }
+                        
+                        // Render template
+                        let content = template.render_with_vars()?;
+                        
+                        // Create message from rendered content
+                        rendered_inputs.push(Input::Message(InputMessage {
+                            role: template_input.role.clone(),
+                            content,
+                        }));
+                    }
+                }
+            }
+            
+            rendered_options.input = Some(rendered_inputs);
+        }
+        
+        client.structure_with_name_and_options(name, rendered_options).await
     }
 }
 

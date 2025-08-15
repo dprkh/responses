@@ -1,4 +1,2 @@
-Valid: {{i18n "greeting"}}
-Invalid include: {{> nonexistent/file.md}}
-Invalid helper: {{unknown_helper value "param"}}
-Valid helper: {{plural item_count "item"}}
+Valid variable: {{item_count}}
+Invalid variable: {{missing_var}}

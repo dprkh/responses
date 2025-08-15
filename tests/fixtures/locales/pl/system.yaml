@@ -2,8 +2,3 @@ system:
   title: "Instrukcje Systemowe"
   intro: "Jesteś {role} z doświadczeniem w rozwoju oprogramowania."
 
-plurals:
-  plik:
-    one: "plik"
-    few: "pliki" 
-    many: "plików"

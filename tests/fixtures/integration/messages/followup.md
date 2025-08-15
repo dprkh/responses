@@ -1,1 +1,1 @@
-{{i18n "followup.message" topic=current_topic difficulty=(plural complexity_level "level")}}
+{{i18n "followup.message" topic=current_topic difficulty=complexity_level}}

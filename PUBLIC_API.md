@@ -36,7 +36,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-responses = "0.1"
+responses = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["rt", "macros"] }
 ```
@@ -73,6 +73,42 @@ async fn main() -> responses::Result<()> {
 }
 ```
 
+#### Client API
+
+The `Client<P>` provides additional methods for accessing the underlying provider:
+
+```rust
+impl<P: Provider> Client<P> {
+    /// Create a new client with the given provider
+    pub fn new(provider: P) -> Self;
+    
+    /// Get a reference to the underlying provider
+    pub fn provider(&self) -> &P;
+    
+    /// Create a text request builder
+    pub fn text(&self) -> TextRequestBuilder<'_, P>;
+    
+    /// Create a structured output request builder
+    pub fn structured<T>(&self) -> StructuredRequestBuilder<'_, P, T>
+    where T: JsonSchema + for<'a> Deserialize<'a>;
+    
+    /// Create a structured output request builder with custom schema name
+    pub fn structured_with_name<T>(&self, name: String) -> StructuredRequestBuilder<'_, P, T>
+    where T: JsonSchema + for<'a> Deserialize<'a>;
+}
+```
+
+**Usage Example:**
+
+```rust
+let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
+
+// Access the underlying provider
+let provider_name = client.provider().name();
+println!("Using provider: {}", provider_name);
+```
+
 #### Manual Configuration
 
 ```rust
@@ -103,6 +139,54 @@ let provider = azure()
     .api_version("2025-03-01-preview")
     .build()?;
 let client = Client::new(provider);
+```
+
+#### AzureConfigBuilder API
+
+The builder pattern creates an `AzureConfigBuilder` when you call `.api_key()`, which provides these methods:
+
+```rust
+impl AzureConfigBuilder {
+    /// Set the Azure OpenAI resource name
+    pub fn resource<S: Into<String>>(self, resource: S) -> Self;
+    
+    /// Set the API version (defaults to "2024-02-15-preview" if not specified)
+    pub fn api_version<S: Into<String>>(self, api_version: S) -> Self;
+    
+    /// Build the configured AzureBuilder
+    pub fn build(self) -> Result<AzureBuilder>;
+}
+```
+
+**Usage Example:**
+
+```rust
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
+
+// Complete builder chain
+let provider = azure()
+    .api_key("your-api-key")
+    .resource("your-resource")
+    .api_version("2025-03-01-preview")
+    .build()?  // Returns AzureBuilder
+    .build()?; // Returns AzureProvider
+
+let client = Client::new(provider);
+```
+
+#### Default Implementations
+
+Several types implement `Default` for convenient initialization:
+
+```rust
+// AzureBuilder implements Default
+let builder = AzureBuilder::default();
+// Equivalent to: AzureBuilder::new()
+
+// Messages implements Default  
+let messages = Messages::default();
+// Equivalent to: Messages::new()
 ```
 
 ## Core APIs
@@ -137,16 +221,25 @@ if let Some(Ok(text)) = response.message {
 
 ```rust
 impl<P: Provider> TextRequestBuilder<P> {
+    // === BASIC MESSAGE METHODS ===
     pub fn model<S: Into<String>>(self, model: S) -> Self;
     pub fn system<S: Into<String>>(self, content: S) -> Self;
     pub fn user<S: Into<String>>(self, content: S) -> Self;
     pub fn assistant<S: Into<String>>(self, content: S) -> Self;
     pub fn developer<S: Into<String>>(self, content: S) -> Self;
     
+    // === TEMPLATE INTEGRATION ===
+    pub fn system_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn assistant_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn var<K: Into<String>, V: Serialize>(self, key: K, value: V) -> Self;
+    pub fn with_locale<S: Into<String>>(self, locale: S) -> Result<Self>;
+    
+    // === TOOLS AND CONFIGURATION ===
     pub fn tools(self, tools: Vec<Tool>) -> Self;
     pub fn tool_choice(self, choice: ToolChoice) -> Self;
     pub fn safety_identifier<S: Into<String>>(self, id: S) -> Self;
     
+    // === CONVERSATION MANAGEMENT ===
     pub fn messages(self, messages: Messages) -> Self;
     pub fn continue_conversation(self, messages: &Messages) -> Self;
     pub fn from_messages(self, messages: Vec<InputMessage>) -> Self;
@@ -155,6 +248,7 @@ impl<P: Provider> TextRequestBuilder<P> {
         I: IntoIterator<Item = (Role, S)>,
         S: Into<String>;
     
+    // === EXECUTION ===
     pub async fn send(self) -> Result<Response<String>>;
 }
 ```
@@ -226,16 +320,25 @@ let response = client
 impl<P: Provider, T> StructuredRequestBuilder<P, T> 
 where T: JsonSchema + for<'a> Deserialize<'a>
 {
+    // === BASIC MESSAGE METHODS ===
     pub fn model<S: Into<String>>(self, model: S) -> Self;
     pub fn system<S: Into<String>>(self, content: S) -> Self;
     pub fn user<S: Into<String>>(self, content: S) -> Self;
     pub fn assistant<S: Into<String>>(self, content: S) -> Self;
     pub fn developer<S: Into<String>>(self, content: S) -> Self;
     
+    // === TEMPLATE INTEGRATION ===
+    pub fn system_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn assistant_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn var<K: Into<String>, V: Serialize>(self, key: K, value: V) -> Self;
+    pub fn with_locale<S: Into<String>>(self, locale: S) -> Result<Self>;
+    
+    // === TOOLS AND CONFIGURATION ===
     pub fn tools(self, tools: Vec<Tool>) -> Self;
     pub fn tool_choice(self, choice: ToolChoice) -> Self;
     pub fn safety_identifier<S: Into<String>>(self, id: S) -> Self;
     
+    // === CONVERSATION MANAGEMENT ===
     pub fn messages(self, messages: Messages) -> Self;
     pub fn continue_conversation(self, messages: &Messages) -> Self;
     pub fn from_messages(self, messages: Vec<InputMessage>) -> Self;
@@ -244,6 +347,7 @@ where T: JsonSchema + for<'a> Deserialize<'a>
         I: IntoIterator<Item = (Role, S)>,
         S: Into<String>;
     
+    // === EXECUTION ===
     pub async fn send(self) -> Result<Response<T>>;
 }
 ```
@@ -300,6 +404,32 @@ for function_call in response.function_calls {
     println!("Called: {}", function_call.name);
     // Process function call as needed
 }
+```
+
+#### Auto-Generated Handler Functions
+
+The `#[tool]` macro automatically generates several things for each annotated function:
+
+1. **Parameters Struct**: `{FunctionName}Params` for type-safe parameter handling
+2. **Handler Struct**: `{FunctionName}Handler` implementing `FunctionHandler` trait  
+3. **Creator Function**: `{function_name}_handler()` that returns a handler instance
+
+**Example:**
+
+```rust
+#[tool]
+async fn get_weather(city: String) -> Result<String> {
+    // Your implementation
+}
+
+// The macro generates:
+// - GetWeatherParams struct
+// - GetWeatherHandler struct  
+// - get_weather_handler() function
+
+// Usage:
+let handler = get_weather_handler();  // Auto-generated function
+let tool = handler.into();            // Convert to Tool via From trait
 ```
 
 
@@ -361,10 +491,12 @@ impl Messages {
     // Constructors
     pub fn from_inputs(inputs: Vec<Input>) -> Self;
     pub fn from_messages(messages: Vec<InputMessage>) -> Self;
+    pub fn from_conversation_template<P: AsRef<std::path::Path>>(path: P, vars: &serde_json::Value) -> Result<Self>;
     
     // Accessors
     pub fn into_inputs(self) -> Vec<Input>;
     pub fn inputs(&self) -> &[Input];
+    pub fn render_inputs(&self) -> Vec<Input>;
     pub fn len(&self) -> usize;
     pub fn is_empty(&self) -> bool;
     pub fn first(&self) -> Option<&Input>;
@@ -835,6 +967,60 @@ let response = client
     .await?;
 ```
 
+#### Enhanced Fluent API - Any Order Chaining
+
+The fluent API supports **any-order chaining** for variables, locale, and template loading. Templates are rendered lazily when `send()` is called, allowing maximum flexibility.
+
+```rust
+// All of these work identically - variables and locale are applied when send() is called
+
+// Variables first, then template
+let response = client
+    .text()
+    .model("gpt-4o")
+    .var("role", "senior engineer")
+    .var("domain", "Rust programming")
+    .with_locale("en")?
+    .system_from_md("prompts/coding_assistant.md")?
+    .user("How do I implement async streams?")
+    .send()
+    .await?;
+
+// Template first, then variables (the original way)
+let response = client
+    .text()
+    .model("gpt-4o")
+    .system_from_md("prompts/coding_assistant.md")?
+    .var("role", "senior engineer")
+    .var("domain", "Rust programming")
+    .with_locale("en")?
+    .user("How do I implement async streams?")
+    .send()
+    .await?;
+
+// Mixed order - completely flexible!
+let response = client
+    .text()
+    .model("gpt-4o")
+    .var("role", "senior engineer")
+    .system_from_md("prompts/coding_assistant.md")?
+    .with_locale("en")?
+    .var("domain", "Rust programming")
+    .user("How do I implement async streams?")
+    .send()
+    .await?;
+```
+
+#### How It Works
+
+1. **Lazy Evaluation**: Templates are stored (not rendered) when `*_from_md()` is called
+2. **Variable Accumulation**: Variables added with `.var()` are accumulated in a map
+3. **Locale Tracking**: The current locale is tracked for i18n rendering
+4. **Render on Send**: When `send()` is called, all templates are rendered with accumulated variables and locale
+5. **Error Handling**: Missing variables or i18n keys are caught during the final render phase
+
+This enables maximum flexibility while maintaining type safety and error handling.
+
 #### Complete Template API
 
 ```rust
@@ -1173,7 +1359,87 @@ let validated_templates = validate_template_environment().await?;
 
 ### Internationalization (i18n)
 
-Templates support full internationalization with locale-specific strings, pluralization, and formatting.
+Templates support full internationalization with locale-specific strings and formatting.
+
+#### LocaleManager API
+
+The `LocaleManager` provides comprehensive locale management for i18n features:
+
+```rust
+impl LocaleManager {
+    /// Create a new LocaleManager with locales directory and default locale
+    pub fn new<P: AsRef<Path>>(locales_path: P, default_locale: &str) -> Result<Self>;
+    
+    /// Load a specific locale into the cache
+    pub fn load_locale(&mut self, locale: &str) -> Result<&LocaleData>;
+    
+    /// Resolve a requested locale (with fallback logic)
+    pub fn resolve_locale(&mut self, requested_locale: &str) -> Result<String>;
+    
+    /// Get cached locale data
+    pub fn get_locale(&mut self, locale: &str) -> Result<&LocaleData>;
+    
+    /// Resolve the file path for a locale
+    pub fn resolve_locale_path(&self, locale: &str) -> Result<PathBuf>;
+    
+    /// Check if a locale is available
+    pub fn is_valid_locale(&self, locale: &str) -> bool;
+    
+    /// Get the number of cached locales
+    pub fn cache_size(&self) -> usize;
+}
+```
+
+#### LocaleData API
+
+The `LocaleData` provides locale-specific string and formatting operations:
+
+```rust
+impl LocaleData {
+    /// Get a localized string by key
+    pub fn get_string(&self, key: &str) -> Option<String>;
+    
+    /// Get a localized string with variable interpolation
+    pub fn interpolate(&self, key: &str, variables: &HashMap<String, serde_json::Value>) -> Result<String>;
+    
+    /// Format a number according to locale rules
+    pub fn format_number(&self, number: f64) -> String;
+    
+    /// Format a value as a percentage
+    pub fn format_percentage(&self, value: f64) -> String;
+    
+    /// Get the text direction for this locale ("ltr" or "rtl")
+    pub fn text_direction(&self) -> &str;
+}
+```
+
+#### Usage Examples
+
+```rust
+use responses::prompt::{LocaleManager, LocaleData};
+use std::collections::HashMap;
+
+// Create locale manager
+let mut locale_manager = LocaleManager::new("locales", "en")?;
+
+// Load and use locale data
+let locale_data = locale_manager.load_locale("es")?;
+let greeting = locale_data.get_string("greeting").unwrap_or_default();
+
+// Interpolate variables
+let mut vars = HashMap::new();
+vars.insert("name".to_string(), serde_json::Value::String("Alice".to_string()));
+let personalized = locale_data.interpolate("greeting_with_name", &vars)?;
+
+// Format numbers
+let formatted_number = locale_data.format_number(1234.56);
+let percentage = locale_data.format_percentage(0.856);
+
+// Check text direction for RTL languages
+if locale_data.text_direction() == "rtl" {
+    println!("Using right-to-left layout");
+}
+```
 
 #### Locale File Structure
 
@@ -1241,7 +1507,7 @@ variables:
 {{i18n "system.intro" role="assistant"}}
 
 ## Current Status
-{{i18n "current_tasks" count=task_count tasks=(plural task_count "tasks")}}
+{{i18n "current_tasks" count=task_count tasks=task_count}}
 
 Progress: {{format_number progress style="percent"}}
 
@@ -1385,6 +1651,30 @@ Let's explore the advanced patterns and optimizations...
 {{user_question}}
 ```
 
+#### Direct Template Loading in Messages
+
+```rust
+use responses::Messages;
+
+// Load conversation template directly into Messages
+let conversation = Messages::from_conversation_template(
+    "prompts/conversations/learning_session.md",
+    &serde_json::json!({
+        "topic": "async programming",
+        "language": "Rust",
+        "user_level": "intermediate"
+    })
+)?;
+
+// Use with client
+let response = client
+    .text()
+    .model("gpt-4o")
+    .messages(conversation)
+    .send()
+    .await?;
+```
+
 #### Using Conversation Templates
 
 ```rust
@@ -1439,6 +1729,35 @@ let code_review_conversation = ConversationTemplate::load("prompts/conversations
 ```
 
 ## Error Handling
+
+Template rendering uses strict error handling, returning errors for missing variables or i18n keys instead of placeholder text.
+
+```rust
+// Missing variables return errors
+let template = PromptTemplate::from_content("Hello {{name}}")?;
+let result = template.render(&json!({}));
+// Result: Err(Error::TemplateVariableNotFound { name: "name" })
+
+// Missing i18n keys return errors
+let template = PromptTemplate::from_content("{{i18n \"missing.key\"}}")?
+    .with_locale("en")?;
+let result = template.render(&json!({}));
+// Result: Err(Error::I18nKeyNotFound { key: "missing.key", locale: "en" })
+
+// Handle template errors appropriately
+match template.render(&vars) {
+    Ok(rendered) => println!("Template: {}", rendered),
+    Err(Error::TemplateVariableNotFound { name }) => {
+        eprintln!("Missing variable: {}", name);
+        // Provide the missing variable and retry
+    }
+    Err(Error::I18nKeyNotFound { key, locale }) => {
+        eprintln!("Missing i18n key '{}' in locale '{}'", key, locale);
+        // Add the key to your locale files
+    }
+    Err(e) => eprintln!("Template error: {}", e),
+}
+```
 
 ### Error Types
 
@@ -1508,6 +1827,21 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ### Response Handling
 
+The `Response<T>` structure provides direct access to response data and function calls:
+
+```rust
+#[derive(Clone, Debug)]
+pub struct Response<T> {
+    /// The main response message - can be successful result, refusal, or None
+    pub message: Option<Result<T, Refusal>>,
+    
+    /// Any function calls requested by the model
+    pub function_calls: Vec<OutputFunctionCall>,
+}
+```
+
+#### Basic Response Handling
+
 ```rust
 let response = client
     .text()
@@ -1516,10 +1850,19 @@ let response = client
     .send()
     .await?;
 
+// Direct field access
 match response.message {
     Some(Ok(text)) => println!("Success: {}", text),
     Some(Err(refusal)) => println!("Model refused: {}", refusal),
     None => println!("No response generated"),
+}
+
+// Check for function calls
+if !response.function_calls.is_empty() {
+    println!("Model requested {} function calls", response.function_calls.len());
+    for call in response.function_calls {
+        println!("Function: {} with args: {}", call.name, call.arguments);
+    }
 }
 ```
 
@@ -2005,4 +2348,4 @@ This comprehensive example demonstrates:
 
 ---
 
-This documentation covers the complete public API surface of the responses library, including the new enhanced function calling capabilities. For more examples, check the `examples/` directory in the repository.
+This documentation covers the complete public API surface of the responses library, including enhanced function calling capabilities and flexible template integration. For more examples, check the `examples/` directory in the repository.

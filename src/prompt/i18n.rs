@@ -15,32 +15,14 @@ pub struct LocaleManager {
     cache: HashMap<String, LocaleData>,
 }
 
-/// Contains locale-specific data including translations, pluralization rules, and formatting.
+/// Contains locale-specific data including translations and formatting.
 #[derive(Debug, Clone)]
 pub struct LocaleData {
     locale: String,
     strings: HashMap<String, serde_yaml::Value>,
-    plural_rules: PluralRules,
     text_direction: TextDirection,
 }
 
-/// Pluralization rules for different languages.
-#[derive(Debug, Clone)]
-pub struct PluralRules {
-    pub language: String,
-    pub rule: PluralRule,
-}
-
-/// Different pluralization rule types.
-#[derive(Debug, Clone)]
-pub enum PluralRule {
-    /// English-style: 1 -> singular, everything else -> plural
-    English,
-    /// Polish-style: complex rules based on numbers
-    Polish,
-    /// Zero/One/Other rules
-    ZeroOneOther,
-}
 
 /// Text direction for RTL language support.
 #[derive(Debug, Clone)]
@@ -180,13 +162,11 @@ impl LocaleManager {
             }
         }
 
-        let plural_rules = Self::get_plural_rules(locale);
         let text_direction = Self::get_text_direction(locale, &all_strings);
 
         Ok(LocaleData {
             locale: locale.to_string(),
             strings: all_strings,
-            plural_rules,
             text_direction,
         })
     }
@@ -195,20 +175,6 @@ impl LocaleManager {
         locale.split('-').next().map(|s| s.to_string())
     }
 
-    fn get_plural_rules(locale: &str) -> PluralRules {
-        let language = locale.split('-').next().unwrap_or(locale);
-        
-        let rule = match language {
-            "pl" => PluralRule::Polish,
-            "en" => PluralRule::English,
-            _ => PluralRule::English, // Default to English rules
-        };
-
-        PluralRules {
-            language: language.to_string(),
-            rule,
-        }
-    }
 
     fn get_text_direction(locale: &str, strings: &HashMap<String, serde_yaml::Value>) -> TextDirection {
         // Check if text direction is explicitly set in locale data
@@ -258,36 +224,6 @@ impl LocaleData {
         Ok(result)
     }
 
-    /// Apply pluralization rules to get the correct form.
-    pub fn pluralize(&self, count: i64, base_key: &str) -> String {
-        match self.plural_rules.rule {
-            PluralRule::English => {
-                if count == 1 {
-                    base_key.to_string()
-                } else {
-                    format!("{}s", base_key)
-                }
-            }
-            PluralRule::Polish => {
-                if count == 1 {
-                    base_key.to_string()
-                } else if count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) {
-                    format!("{}i", base_key) // pliki
-                } else {
-                    format!("{}ów", base_key) // plików
-                }
-            }
-            PluralRule::ZeroOneOther => {
-                if count == 0 {
-                    format!("{}s", base_key) // Usually same as plural
-                } else if count == 1 {
-                    base_key.to_string()
-                } else {
-                    format!("{}s", base_key)
-                }
-            }
-        }
-    }
 
     /// Format a number according to locale conventions.
     pub fn format_number(&self, number: f64) -> String {

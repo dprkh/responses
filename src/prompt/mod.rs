@@ -5,7 +5,6 @@
 
 pub mod i18n;
 pub mod template;
-pub mod markdown;
 pub mod conversation;
 
 pub use template::{PromptTemplate, TemplateSet};

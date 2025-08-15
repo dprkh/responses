@@ -1,1 +1,1 @@
-{{plural iteration_count "iteration"}} completed, {{format_number completion style="percent"}}.
+{{iteration_count}} iterations completed, {{format_number completion style="percent"}}.

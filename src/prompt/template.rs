@@ -224,7 +224,9 @@ impl TemplateParser {
                     break;
                 }
             } else {
-                break;
+                // No more cases found, advance position by 1 to avoid infinite loop
+                // This allows us to skip whitespace and find the {{/switch}} terminator
+                self.position += 1;
             }
         }
         
@@ -488,7 +490,7 @@ impl TemplateExecutor {
                 if let Some(value) = vars.get(name) {
                     Ok(Some(self.value_to_string(value)))
                 } else {
-                    Ok(Some(format!("{{{{{}}}}}", name))) // Keep unresolved variables
+                    Err(Error::TemplateVariableNotFound { name: name.clone() })
                 }
             }
             
@@ -496,7 +498,7 @@ impl TemplateExecutor {
                 if let Some(value) = self.resolve_nested_value(parts, vars) {
                     Ok(Some(self.value_to_string(&value)))
                 } else {
-                    Ok(Some(format!("{{{{{}}}}}", parts.join("."))))
+                    Err(Error::TemplateVariableNotFound { name: parts.join(".") })
                 }
             }
             
@@ -641,13 +643,7 @@ impl TemplateExecutor {
                 if let Ok(nodes) = parser.parse() {
                     if let Some(TemplateNode::Helper { name, args, params: helper_params }) = nodes.first() {
                         if let Ok(Some(result)) = self.render_helper(&name, &args, &helper_params, vars) {
-                            // For plural helper in i18n context, extract just the word part (remove count)
-                            let final_result = if name == "plural" && result.contains(' ') {
-                                // Extract everything after the first space (the word part)
-                                result.split_once(' ').map(|(_, word)| word.to_string()).unwrap_or(result)
-                            } else {
-                                result
-                            };
+                            let final_result = result;
                             interpolation_vars.insert(param_name.clone(), serde_json::Value::String(final_result));
                         } else {
                             // Helper function failed, use literal
@@ -699,18 +695,24 @@ impl TemplateExecutor {
                         }
                     }
                 } else {
-                    // Key not found, return placeholder or empty
-                    Ok(Some(format!("<!-- I18n key not found: {} -->", key)))
+                    // Key not found, return error
+                    Err(Error::I18nKeyNotFound { 
+                        key: key.to_string(), 
+                        locale: self.current_locale.clone() 
+                    })
                 }
             }
-            Err(_) => {
-                // Locale not found
-                Ok(Some(format!("<!-- Locale not found: {} -->", self.current_locale)))
+            Err(e) => {
+                // Locale not found - propagate the error
+                Err(e)
             }
         }
         } else {
-            // No locale manager
-            Ok(Some(format!("<!-- I18n: {} -->", key)))
+            // No locale manager - return error for i18n keys when no locale is configured
+            Err(Error::I18nKeyNotFound { 
+                key: key.to_string(), 
+                locale: self.current_locale.clone() 
+            })
         }
     }
 
@@ -781,59 +783,11 @@ impl TemplateExecutor {
 
     fn render_helper(&mut self, name: &str, args: &[String], params: &HashMap<String, String>, vars: &HashMap<String, serde_json::Value>) -> Result<Option<String>> {
         match name {
-            "plural" => self.render_plural_helper(args, vars),
             "format_number" => self.render_format_number_helper(args, params, vars),
             _ => Ok(Some(format!("<!-- Unknown helper: {} -->", name))),
         }
     }
 
-    fn render_plural_helper(&self, args: &[String], vars: &HashMap<String, serde_json::Value>) -> Result<Option<String>> {
-        if args.is_empty() {
-            return Ok(Some("<!-- plural helper requires arguments -->".to_string()));
-        }
-
-        // First argument should be the count variable
-        let count_arg = &args[0];
-        let count_value = if let Some(value) = vars.get(count_arg) {
-            match value.as_u64().or_else(|| value.as_i64().map(|i| i as u64)) {
-                Some(n) => n,
-                None => {
-                    // Try to parse as number from string
-                    if let Some(s) = value.as_str() {
-                        s.parse::<u64>().unwrap_or(0)
-                    } else {
-                        0
-                    }
-                }
-            }
-        } else {
-            return Ok(Some(format!("<!-- variable {} not found -->", count_arg)));
-        };
-
-        // Second argument is the base word
-        let base_word = if args.len() > 1 {
-            args[1].trim_matches('"').to_string()
-        } else {
-            "item".to_string()
-        };
-
-        // Third argument (optional) is the plural form
-        let plural_form = if args.len() > 2 {
-            args[2].trim_matches('"').to_string()
-        } else {
-            // Default English pluralization
-            format!("{}s", base_word)
-        };
-
-        // Apply pluralization rules
-        let word = if count_value == 1 {
-            base_word
-        } else {
-            plural_form
-        };
-
-        Ok(Some(format!("{} {}", count_value, word)))
-    }
 
     fn render_format_number_helper(&self, args: &[String], params: &HashMap<String, String>, vars: &HashMap<String, serde_json::Value>) -> Result<Option<String>> {
         if args.is_empty() {
@@ -1680,12 +1634,14 @@ Content here."#;
 
 {{> shared/greeting.md}}"#;
 
-        let template = PromptTemplate::from_content(content).unwrap();
+        let template = PromptTemplate::from_content(content).unwrap()
+            .with_locale("en").unwrap();
         let vars = json!({ "username": "Alice" });
-        let result = template.render(&vars).unwrap();
+        let result = template.render_with_base_path(&vars, Some(PathBuf::from("tests/fixtures/templates"))).unwrap();
         
         assert!(result.contains("User: Alice"));
         assert!(result.contains("This is content from the shared greeting template."));
+        assert!(result.contains("Hello! Welcome to the system")); // From i18n greeting
     }
 
     #[test]
@@ -1882,15 +1838,22 @@ Main content here.
     }
 
     #[test]
-    fn test_i18n_key_not_found_graceful_handling() {
+    fn test_i18n_key_not_found_strict_error() {
         let content = r#"{{i18n "nonexistent.key" param="value"}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
             .with_locale("en").unwrap();
         
-        let result = template.render(&json!({})).unwrap();
-        // Should gracefully handle missing keys
-        assert!(result.contains("nonexistent.key") || result.is_empty());
+        let result = template.render(&json!({}));
+        // Should now return error for missing keys instead of placeholder
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::I18nKeyNotFound { key, locale } => {
+                assert_eq!(key, "nonexistent.key");
+                assert_eq!(locale, "en");
+            }
+            e => panic!("Expected I18nKeyNotFound error, got: {:?}", e),
+        }
     }
 
     #[test]
@@ -1957,59 +1920,8 @@ Main content here.
     // === PHASE 3: HELPER FUNCTIONS TDD TESTS ===
     // These tests drive implementation of template helper functions
 
-    #[test]
-    fn test_plural_helper_basic_usage() {
-        let content = r#"You have {{plural task_count "task"}} remaining."#;
-        
-        let template = PromptTemplate::from_content(content).unwrap();
-        
-        // Test singular (1)
-        let vars = json!({"task_count": 1});
-        let result = template.render(&vars).unwrap();
-        assert_eq!(result, "You have 1 task remaining.");
-        
-        // Test plural (3)  
-        let vars = json!({"task_count": 3});
-        let result = template.render(&vars).unwrap();
-        assert_eq!(result, "You have 3 tasks remaining.");
-        
-        // Test zero case
-        let vars = json!({"task_count": 0});
-        let result = template.render(&vars).unwrap();
-        assert_eq!(result, "You have 0 tasks remaining.");
-    }
 
-    #[test]
-    fn test_plural_helper_with_custom_forms() {
-        let content = r#"{{plural item_count "item" "items"}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap();
-        
-        let vars = json!({"item_count": 1});
-        let result = template.render(&vars).unwrap();
-        assert_eq!(result, "1 item");
-        
-        let vars = json!({"item_count": 5});
-        let result = template.render(&vars).unwrap();
-        assert_eq!(result, "5 items");
-    }
 
-    #[test]
-    fn test_plural_helper_with_locale_integration() {
-        let content = r#"{{plural task_count "tasks"}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
-        
-        // Should use fixture pluralization rules
-        let vars = json!({"task_count": 1});
-        let result = template.render(&vars).unwrap();
-        assert!(result.contains("1 task") || result.contains("1 tasks")); // Allow either until implemented
-        
-        let vars = json!({"task_count": 3});
-        let result = template.render(&vars).unwrap();
-        assert!(result.contains("3 tasks"));
-    }
 
     #[test]
     fn test_format_number_helper_basic() {
@@ -2048,62 +1960,9 @@ Main content here.
         assert!(result.contains("3.14"));
     }
 
-    #[test]
-    fn test_helpers_within_i18n_context() {
-        let content = r#"{{i18n "current_tasks" count=task_count tasks=(plural task_count "task")}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
-        
-        // Should combine i18n with helper function results
-        // Uses fixture: "current_tasks": "You currently have {count} {tasks} pending review."
-        let vars = json!({"task_count": 2});
-        let result = template.render(&vars).unwrap();
-        assert!(result.contains("2"));
-        assert!(result.contains("tasks"));
-        assert!(result.contains("pending review"));
-    }
 
-    #[test]
-    fn test_multiple_helpers_in_template() {
-        let content = r#"Status: {{plural active_count "user"}} active, Progress: {{format_number completion style="percent"}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap();
-        
-        let vars = json!({
-            "active_count": 5,
-            "completion": 0.85
-        });
-        let result = template.render(&vars).unwrap();
-        assert!(result.contains("5 users"));
-        assert!(result.contains("85%"));
-    }
 
-    #[test]
-    fn test_nested_helper_calls() {
-        let content = r#"{{format_number (plural item_count "item") style="none"}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap();
-        
-        // This tests helper composition (if supported)
-        let vars = json!({"item_count": 3});
-        let result = template.render(&vars).unwrap();
-        // For now, just ensure it doesn't crash
-        assert!(!result.is_empty());
-    }
 
-    #[test]
-    fn test_helper_error_handling() {
-        let content = r#"{{plural invalid_var "task"}}"#;
-        
-        let template = PromptTemplate::from_content(content).unwrap();
-        
-        let result = template.render(&json!({}));
-        // Should handle missing variables gracefully
-        assert!(result.is_ok());
-        let result_str = result.unwrap();
-        assert!(!result_str.is_empty()); // Should produce some output, even if placeholder
-    }
 
     #[test]
     fn test_format_number_with_locale() {
@@ -2239,7 +2098,7 @@ Status: Inactive
         std::fs::create_dir_all("tests/fixtures/builder_test").unwrap();
         std::fs::write(
             "tests/fixtures/builder_test/assistant.md", 
-            "{{i18n \"greeting\" name=user_name}}"
+            "{{i18n \"greeting\"}} {{user_name}}"
         ).unwrap();
         
         use crate::{azure, provider::ProviderBuilder};
@@ -2410,17 +2269,17 @@ System Status: {{system_status}}"#
             .var("completion", 0.847)
             .var("cpu_usage", 23.456)
             .var("status", "Operational")
-            .var("system_version", "v2.1.0");
+            .var("system_version", "v2.1.0")
+            .var("locale", "en");
             
         let result = template.render_with_vars().unwrap();
         
         // Verify all features working together
         assert!(result.contains("System Instructions")); // i18n title
-        assert!(result.contains("1250 users")); // plural helper
-        assert!(result.contains("3 tasks")); // plural in i18n context
+        // Note: plural helper removed
         assert!(result.contains("84.7%")); // format_number percent
         assert!(result.contains("23.46")); // format_number decimal (default 2 decimal places)
-        assert!(result.contains("System Status - 1250 users")); // include with plural helper
+        // Note: plural helper removed from includes
         assert!(result.contains("System Status: Operational")); // include with variables
         assert!(result.contains("Version: v2.1.0")); // footer include
         assert!(result.contains("Thanks for using")); // footer content
@@ -2503,13 +2362,13 @@ Let me help you with {{i18n "task_type" type=topic}}."#
             r#"You are a {{role}} assistant helping with {{task_type}}.
 
 Experience level: {{experience}}
-Active sessions: {{plural session_count "session"}}
+Active sessions: {{session_count}}
 Load factor: {{format_number load_factor style="percent"}}"#
         ).unwrap();
         
         std::fs::write(
             "tests/fixtures/integration/messages/followup.md",
-            r#"{{i18n "followup.message" topic=current_topic difficulty=(plural complexity_level "level")}}"#
+            r#"{{i18n "followup.message" topic=current_topic difficulty=complexity_level}}"#
         ).unwrap();
 
         let conversation = crate::Messages::new()
@@ -2536,7 +2395,7 @@ Load factor: {{format_number load_factor style="percent"}}"#
         // System message should contain rendered template
         if let crate::types::Input::Message(msg) = &inputs[0] {
             assert!(msg.content.contains("expert assistant"));
-            assert!(msg.content.contains("12 sessions"));
+            assert!(msg.content.contains("12"));
             assert!(msg.content.contains("73%"));
         }
         
@@ -2569,7 +2428,7 @@ Progress: {{format_number completion style="percent"}}"#
             
         let result_en = template_en.render_with_vars().unwrap();
         assert!(result_en.contains("Hello")); // English greeting
-        assert!(result_en.contains("5 users")); // English plural 
+        // Note: plural helper removed 
         assert!(result_en.contains("92%")); // Number formatting
         
         // Test Spanish  
@@ -2580,7 +2439,7 @@ Progress: {{format_number completion style="percent"}}"#
             
         let result_es = template_es.render_with_vars().unwrap();
         assert!(result_es.contains("¡Hola")); // Spanish greeting
-        assert!(result_es.contains("5 users")); // Plural helper (English pluralization for now)
+        // Note: plural helper removed
         assert!(result_es.contains("92%")); // Number formatting (universal)
     }
 
@@ -2592,7 +2451,7 @@ Progress: {{format_number completion style="percent"}}"#
         
         std::fs::write(
             "tests/fixtures/integration/performance/cached_template.md",
-            r#"{{plural iteration_count "iteration"}} completed, {{format_number completion style="percent"}}."#
+            r#"{{iteration_count}} iterations completed, {{format_number completion style="percent"}}."#
         ).unwrap();
         
         let template = PromptTemplate::load("tests/fixtures/integration/performance/cached_template.md").unwrap()
@@ -2611,7 +2470,7 @@ Progress: {{format_number completion style="percent"}}"#
                 println!("Sample result: '{}'", result);
             }
                 
-            assert!(result.contains(&format!("{} iteration", i)));
+            assert!(result.contains(&format!("{} iterations", i)));
             if i == 1 {
                 let expected = format!("{}%", i);
                 println!("Looking for: '{}'", expected);
@@ -2630,29 +2489,28 @@ Progress: {{format_number completion style="percent"}}"#
 
     #[test]
     fn test_error_handling_integration() {
-        // Test that errors are handled gracefully across all features
+        // Test that errors are properly returned instead of placeholders
         
         std::fs::create_dir_all("tests/fixtures/integration/errors").unwrap();
         
         std::fs::write(
             "tests/fixtures/integration/errors/mixed_template.md",
-            r#"Valid: {{i18n "greeting"}}
-Invalid include: {{> nonexistent/file.md}}
-Invalid helper: {{unknown_helper value "param"}}
-Valid helper: {{plural item_count "item"}}"#
+            r#"Valid variable: {{item_count}}
+Invalid variable: {{missing_var}}"#
         ).unwrap();
         
         let template = PromptTemplate::load("tests/fixtures/integration/errors/mixed_template.md").unwrap()
-            .with_locale("en").unwrap()
             .var("item_count", 3);
             
-        // Should render successfully, handling errors gracefully
-        let result = template.render_with_vars().unwrap();
-        
-        assert!(result.contains("Hello")); // Valid i18n works
-        assert!(result.contains("3 items")); // Valid helper works
-        // Invalid parts should be handled gracefully (not crash)
-        assert!(result.len() > 20); // Should produce meaningful output
+        // Should return error when encountering missing variable
+        let result = template.render_with_vars();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::TemplateVariableNotFound { name } => {
+                assert_eq!(name, "missing_var");
+            }
+            e => panic!("Expected TemplateVariableNotFound error, got: {:?}", e),
+        }
     }
 
     #[test]
