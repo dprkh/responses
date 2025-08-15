@@ -31,34 +31,34 @@ pub enum Error {
         #[source] source: std::io::Error 
     },
     
-    #[error("Template variable not found: {name}")]
+    #[error("Template variable not found: {name}\nHelp: Define this variable using .var(\"{name}\", value) or ensure it's included in your template variables.")]
     TemplateVariableNotFound { name: String },
     
-    #[error("Template parsing failed: {0}")]
+    #[error("Template parsing failed: {0}\nHelp: Check your template syntax for proper Handlebars formatting and valid YAML frontmatter.")]
     TemplateParsing(String),
     
-    #[error("Required template variables missing: {variables:?}")]
+    #[error("Required template variables missing: {variables:?}\nHelp: Define these variables using .var(name, value) before rendering the template.")]
     RequiredVariablesMissing { variables: Vec<String> },
     
-    #[error("Locale not found: {locale}")]
+    #[error("Locale not found: {locale}\nHelp: Ensure the locale directory exists at locales/{locale}/ with the required YAML files.")]
     LocaleNotFound { locale: String },
     
-    #[error("i18n key not found: {key} in locale {locale}")]
+    #[error("i18n key not found: {key} in locale {locale}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml")]
     I18nKeyNotFound { key: String, locale: String },
     
     #[error("Task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
     
-    #[error("Function call parameter parsing failed for '{function_name}': {source}")]
+    #[error("Function call parameter parsing failed for '{function_name}': {source}\nHelp: Ensure the function call arguments match the expected parameter types. Check the function definition for required parameters.")]
     FunctionParameterParsing { 
         function_name: String, 
         #[source] source: serde_json::Error 
     },
     
-    #[error("Function '{function_name}' expected arguments but received none")]
+    #[error("Function '{function_name}' expected arguments but received none\nHelp: This function requires parameters. Check the function definition and provide the required arguments.")]
     FunctionMissingArguments { function_name: String },
     
-    #[error("Function call validation failed: {reason}")]
+    #[error("Function call validation failed: {reason}\nHelp: Review the function parameters and ensure they meet the validation requirements.")]
     FunctionValidation { reason: String },
 }
 

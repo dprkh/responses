@@ -1,0 +1,1 @@
+{{i18n "greeting" name=user_name}}

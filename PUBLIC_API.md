@@ -15,14 +15,15 @@ A comprehensive Rust library for Azure OpenAI's Responses API, providing a moder
   - [Messages Builder](#messages-builder)
   - [Conversation Persistence](#conversation-persistence)
   - [Advanced Message Operations](#advanced-message-operations)
-- [Function Handling](#function-handling)
+- [Function Calling with #[tool]](#function-calling-with-tool)
   - [Function Handlers](#function-handlers)
-  - [Function Request Builder](#function-request-builder)
   - [Function Call Processing](#function-call-processing)
   - [Function Macros](#function-macros)
 - [Multiline Message Support](#multiline-message-support)
 - [Prompt Templates](#prompt-templates)
   - [Markdown Template System](#markdown-template-system)
+  - [Template Set Management](#template-set-management)
+  - [Template Validation and Dependencies](#template-validation-and-dependencies)
   - [Internationalization (i18n)](#internationalization-i18n)
   - [Template Variables and Composition](#template-variables-and-composition)
   - [Conversation Templates](#conversation-templates)
@@ -45,7 +46,7 @@ Set up environment variables for Azure OpenAI:
 ```bash
 export AZURE_OPENAI_API_KEY="your-api-key"
 export AZURE_OPENAI_RESOURCE="your-resource-name"
-export AZURE_OPENAI_API_VERSION="2024-02-15-preview"
+export AZURE_OPENAI_API_VERSION="2025-03-01-preview"
 ```
 
 ## Client Setup
@@ -57,13 +58,15 @@ This library provides Azure OpenAI integration only.
 #### Quick Setup
 
 ```rust
-use responses::azure;
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
 
 #[tokio::main]
 async fn main() -> responses::Result<()> {
-    let client = azure()
+    let provider = azure()
         .from_env()?
-        .build_client()?;
+        .build()?;
+    let client = Client::new(provider);
     
     // Use client for requests...
     Ok(())
@@ -73,28 +76,33 @@ async fn main() -> responses::Result<()> {
 #### Manual Configuration
 
 ```rust
-use responses::{azure, providers::AzureConfig};
+use responses::{azure, providers::AzureConfig, Client};
+use responses::provider::ProviderBuilder;
 
 let config = AzureConfig {
     api_key: "your-api-key".to_string(),
     resource: "your-resource".to_string(),
-    api_version: "2024-02-15-preview".to_string(),
+    api_version: "2025-03-01-preview".to_string(),
 };
 
-let client = azure()
+let provider = azure()
     .with_config(config)
-    .build_client()?;
+    .build()?;
+let client = Client::new(provider);
 ```
 
 #### Builder Pattern
 
 ```rust
-let client = azure()
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
+
+let provider = azure()
     .api_key("your-api-key")
     .resource("your-resource")
-    .api_version("2024-02-15-preview")
-    .build()?
-    .build_client()?;
+    .api_version("2025-03-01-preview")
+    .build()?;
+let client = Client::new(provider);
 ```
 
 ## Core APIs
@@ -106,9 +114,11 @@ The `TextRequestBuilder` provides a fluent API for generating text responses.
 #### Basic Text Generation
 
 ```rust
-use responses::azure;
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
 
-let client = azure().from_env()?.build_client()?;
+let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
 
 let response = client
     .text()
@@ -272,14 +282,15 @@ async fn get_weather(
     })
 }
 
-let client = azure().from_env()?.build_client()?;
+let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
 
 let response = client
     .text()
     .model("gpt-4o")
     .system("You are a helpful weather assistant")
     .user("What's the weather in Paris?")
-    .tools(vec![get_weather_handler()])
+    .tools(vec![get_weather_handler().into()])  // Cleaner with From trait
     .tool_choice(ToolChoice::Auto)
     .send()
     .await?;
@@ -338,11 +349,8 @@ impl Messages {
     pub fn developer<S: Into<String>>(self, content: S) -> Self;
     pub fn add_message<S: Into<String>>(self, role: Role, content: S) -> Self;
     
-    // Multiline message helpers
-    pub fn system_prompt<S: Into<String>>(self, content: S) -> Self;
-    pub fn user_message<S: Into<String>>(self, content: S) -> Self;
-    pub fn assistant_response<S: Into<String>>(self, content: S) -> Self;
-    pub fn developer_note<S: Into<String>>(self, content: S) -> Self;
+    // Note: Previously had system_prompt(), user_message(), assistant_response(), developer_note()
+    // These have been removed in favor of the simpler system(), user(), assistant(), developer() methods
     
     // Bulk operations
     pub fn add_messages<I, S>(self, messages: I) -> Self 
@@ -539,7 +547,7 @@ let response = client
     .model("gpt-4o")
     .system("You are a weather assistant")
     .user("What's the weather in Paris and Tokyo?")
-    .tools(vec![get_weather_handler().tool(), get_weather_custom_handler().tool()])
+    .tools(vec![get_weather_handler().into(), get_weather_custom_handler().into()])
     .tool_choice(ToolChoice::Auto)
     .send()
     .await?;
@@ -632,6 +640,25 @@ else if response.function_calls.len() > 1 {
 - **Concurrent**: Built-in support for parallel execution with `tokio::spawn`
 - **Clone-able**: Generated handlers can be shared across tasks
 - **Clean APIs**: Each handler's `invoke` method returns `Option<T>` if it matches
+- **From Trait**: Automatic conversion from handlers to tools with `.into()`
+
+### Cleaner Tool Usage
+
+The `#[tool]` macro now generates `From<Handler> for Tool` implementations, making tool usage cleaner:
+
+```rust
+// Before (explicit)
+.tools(vec![handler.tool()])
+
+// After (cleaner with From trait)  
+.tools(vec![handler.into()])
+
+// Both approaches work, use whichever you prefer
+.tools(vec![
+    weather_handler.into(),          // Using From trait
+    calculate_handler.tool(),        // Explicit method
+])
+```
 
 
 
@@ -723,9 +750,9 @@ The prompt template system enables you to separate prompt engineering from code 
 
 ### Markdown Template System
 
-Store your prompts in `.md` files with YAML frontmatter for configuration and variables.
+Store your prompts in `.md` files with YAML frontmatter for configuration, variables, validation, and dependency management.
 
-#### Basic Template Structure
+#### Enhanced Template Structure
 
 ```markdown
 ---
@@ -733,8 +760,16 @@ variables:
   role: "{{role}}"
   domain: "{{domain}}"
   experience_years: "{{experience_years}}"
-locale_key: "coding_assistant"
+required_variables:
+  - "role"
+  - "domain"
+includes:
+  - "shared/header.md"
+  - "shared/footer.md"
+i18n_key: "coding_assistant"
 ---
+
+{{> shared/header.md}}
 
 # {{i18n "system.title"}}
 
@@ -749,15 +784,43 @@ You specialize in {{domain}} with {{experience_years}} years of experience.
 - {{i18n "guidelines.provide_examples"}}
 - {{i18n "guidelines.ask_clarification"}}
 {{/i18n}}
+
+{{> shared/footer.md}}
+```
+
+#### Frontmatter Configuration
+
+```yaml
+---
+# Default variables (can be overridden at render time)
+variables:
+  greeting: "Hello"
+  role: "assistant"
+  
+# Required variables (must be provided at render time)
+required_variables:
+  - "user_name"
+  - "task_type"
+  
+# Template dependencies (validated when base_path is provided)
+includes:
+  - "shared/header.md"
+  - "components/task_instructions.md"
+  - "shared/footer.md"
+  
+# Internationalization key for locale-aware template selection
+i18n_key: "system.main_prompt"
+---
 ```
 
 #### Loading Templates in Code
 
 ```rust
-use responses::{azure, Messages};
-use responses::prompt::template::MarkdownPrompt;
+use responses::{azure, Messages, Client};
+use responses::prompt::PromptTemplate;
 
-let client = azure().from_env()?.build_client()?;
+let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
 
 // Simple template loading
 let response = client
@@ -772,23 +835,340 @@ let response = client
     .await?;
 ```
 
-#### Template API
+#### Complete Template API
 
 ```rust
-// Load template from file
-let template = MarkdownPrompt::load("prompts/system.md")?;
+impl PromptTemplate {
+    // === LOADING AND CREATION ===
+    
+    /// Load template from file
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self>;
+    
+    /// Create template from string content
+    pub fn from_content(content: &str) -> Result<Self>;
+    
+    // === LOCALE SUPPORT ===
+    
+    /// Set locale for internationalization
+    pub fn with_locale(mut self, locale: &str) -> Result<Self>;
+    
+    // === FRONTMATTER ACCESS ===
+    
+    /// Get list of required variables from frontmatter
+    pub fn required_variables(&self) -> &[String];
+    
+    /// Get list of include dependencies from frontmatter
+    pub fn includes(&self) -> Vec<String>;
+    
+    // === VALIDATION ===
+    
+    /// Validate that all required variables are provided
+    pub fn validate_variables(&self, vars: &serde_json::Value) -> Result<()>;
+    
+    /// Validate that all frontmatter includes exist at base path
+    pub fn validate_includes(&self, base_path: &Path) -> Result<()>;
+    
+    // === RENDERING ===
+    
+    /// Render template with variables
+    pub fn render(&self, vars: &serde_json::Value) -> Result<String>;
+    
+    /// Render template with base path for relative includes
+    pub fn render_with_base_path(&self, vars: &serde_json::Value, base_path: Option<PathBuf>) -> Result<String>;
+    
+    /// Render with serializable context object
+    pub fn render_with_context<T: Serialize>(&self, context: &T) -> Result<String>;
+    
+    // === FLUENT API (Variable Chaining) ===
+    
+    /// Add variable to template (fluent API)
+    pub fn var<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Self;
+    
+    /// Render with accumulated variables
+    pub fn render_with_vars(&self) -> Result<String>;
+    
+    /// Render with accumulated + additional variables
+    pub fn render_with_additional_vars(&self, additional_vars: &serde_json::Value) -> Result<String>;
+}
+```
 
-// Set variables
-let template = template
-    .var("role", "assistant")
-    .var("expertise", "machine learning")
-    .var("active", true);
+#### Usage Examples
 
-// Apply locale
-let template = template.with_locale("es")?;
+```rust
+use responses::prompt::PromptTemplate;
+use std::path::PathBuf;
 
-// Render to string
-let rendered = template.render()?;
+// === BASIC LOADING AND RENDERING ===
+
+let template = PromptTemplate::load("prompts/system.md")?;
+let vars = serde_json::json!({
+    "role": "assistant",
+    "domain": "machine learning",
+    "user_name": "Alice"
+});
+let rendered = template.render(&vars)?;
+
+// === FLUENT API WITH VARIABLE CHAINING ===
+
+let response = client
+    .text()
+    .model("gpt-4o")
+    .system_from_md("prompts/coding_assistant.md")?
+    .var("role", "senior engineer")
+    .var("domain", "Rust programming")
+    .var("experience_years", 8)
+    .user("How do I implement async streams?")
+    .send()
+    .await?;
+
+// === WITH BASE PATH FOR RELATIVE INCLUDES ===
+
+let template = PromptTemplate::load("prompts/main.md")?;
+let base_path = PathBuf::from("prompts");
+let rendered = template.render_with_base_path(&vars, Some(base_path))?;
+
+// === VALIDATION BEFORE RENDERING ===
+
+let template = PromptTemplate::load("prompts/strict.md")?;
+
+// Check what variables are required
+let required = template.required_variables();
+println!("Required variables: {:?}", required);
+
+// Check template dependencies
+let includes = template.includes();
+println!("Template includes: {:?}", includes);
+
+// Validate variables before rendering
+let vars = serde_json::json!({"user_name": "Bob"});
+template.validate_variables(&vars)?; // Will fail if required vars missing
+
+// Validate includes exist
+let base_path = PathBuf::from("templates");
+template.validate_includes(&base_path)?; // Will fail if includes don't exist
+
+// === LOCALE SUPPORT ===
+
+let template = PromptTemplate::load("prompts/system.md")?
+    .with_locale("es")?
+    .var("role", "asistente")
+    .var("domain", "programación");
+```
+
+### Template Set Management
+
+The `TemplateSet` provides enterprise-grade template management with organized directory structures, base path resolution, and locale switching.
+
+#### TemplateSet API
+
+```rust
+impl TemplateSet {
+    // === CREATION AND LOADING ===
+    
+    /// Load all templates from a directory
+    pub fn from_dir<P: AsRef<Path>>(dir: P) -> Result<Self>;
+    
+    // === LOCALE MANAGEMENT ===
+    
+    /// Switch locale for all templates in the set
+    pub fn with_locale(mut self, locale: &str) -> Result<Self>;
+    
+    /// Get current locale
+    pub fn current_locale(&self) -> &str;
+    
+    // === TEMPLATE RENDERING ===
+    
+    /// Render a template by name (uses base_path for includes)
+    pub fn render(&self, template_name: &str, vars: &serde_json::Value) -> Result<String>;
+    
+    /// Render a conversation template as Messages
+    pub fn render_conversation(&self, name: &str, vars: &serde_json::Value) -> Result<Messages>;
+    
+    // === DISCOVERY ===
+    
+    /// List all available template names
+    pub fn list_templates(&self) -> Vec<&str>;
+    
+    /// Check if a template exists
+    pub fn template_exists(&self, name: &str) -> bool;
+    
+    /// List all conversation template names
+    pub fn list_conversations(&self) -> Vec<&str>;
+    
+    /// Check if a conversation template exists
+    pub fn conversation_exists(&self, name: &str) -> bool;
+}
+```
+
+#### Template Directory Organization
+
+```
+templates/
+├── system_prompts/
+│   ├── coding_assistant.md
+│   ├── data_analyst.md
+│   └── creative_writer.md
+├── conversations/
+│   ├── learning_session.md
+│   ├── code_review.md
+│   └── debug_session.md
+├── shared/
+│   ├── header.md
+│   ├── footer.md
+│   └── guidelines.md
+├── components/
+│   ├── task_instructions.md
+│   └── safety_guidelines.md
+└── locales/
+    ├── en/
+    │   └── system.yaml
+    ├── es/
+    │   └── system.yaml
+    └── ja/
+        └── system.yaml
+```
+
+#### TemplateSet Usage
+
+```rust
+use responses::prompt::TemplateSet;
+use std::path::PathBuf;
+
+// === LOADING TEMPLATE SETS ===
+
+let template_set = TemplateSet::from_dir("templates")?;
+
+// List available templates
+let templates = template_set.list_templates();
+println!("Available templates: {:?}", templates);
+
+// === RENDERING WITH BASE PATH RESOLUTION ===
+
+// Templates can use {{> shared/header.md}} and it resolves relative to base_path
+let vars = serde_json::json!({
+    "user_name": "Alice",
+    "role": "engineer"
+});
+
+let rendered = template_set.render("system_prompts/coding_assistant", &vars)?;
+
+// === LOCALE SWITCHING ===
+
+// Switch to Spanish locale for all templates
+let spanish_set = template_set.with_locale("es")?;
+let spanish_rendered = spanish_set.render("system_prompts/coding_assistant", &vars)?;
+
+// === CONVERSATION TEMPLATES ===
+
+let conversation_msgs = template_set.render_conversation("learning_session", &vars)?;
+
+// Use with client
+let response = client
+    .text()
+    .model("gpt-4o")
+    .messages(conversation_msgs)
+    .send()
+    .await?;
+```
+
+### Template Validation and Dependencies
+
+The template system provides comprehensive validation for production environments.
+
+#### Required Variables Validation
+
+```markdown
+---
+required_variables:
+  - "user_name"
+  - "task_type"
+  - "complexity_level"
+variables:
+  greeting: "Hello"
+  role: "assistant"
+---
+
+Hello {{user_name}},
+
+I'm your {{role}} ready to help with {{task_type}} tasks.
+The complexity level is set to {{complexity_level}}.
+```
+
+```rust
+// This will fail validation if required variables are missing
+let template = PromptTemplate::load("prompts/strict.md")?;
+let incomplete_vars = serde_json::json!({
+    "user_name": "Alice"
+    // Missing: task_type, complexity_level
+});
+
+// Validation error with clear message
+match template.render(&incomplete_vars) {
+    Err(Error::RequiredVariablesMissing { variables }) => {
+        println!("Missing required variables: {:?}", variables);
+        // Output: Missing required variables: ["task_type", "complexity_level"]
+    }
+    _ => unreachable!()
+}
+```
+
+#### Include Dependency Management
+
+```markdown
+---
+includes:
+  - "shared/header.md"
+  - "components/task_instructions.md"
+  - "shared/footer.md"
+variables:
+  project_name: "{{project_name}}"
+---
+
+{{> shared/header.md}}
+
+## Project: {{project_name}}
+
+{{> components/task_instructions.md}}
+
+{{> shared/footer.md}}
+```
+
+```rust
+// Validate template dependencies
+let template = PromptTemplate::load("prompts/main.md")?;
+let base_path = PathBuf::from("templates");
+
+// This validates that all included files exist
+template.validate_includes(&base_path)?;
+
+// Or validate automatically during rendering
+let vars = serde_json::json!({"project_name": "MyProject"});
+let rendered = template.render_with_base_path(&vars, Some(base_path))?;
+```
+
+#### Production Validation Workflow
+
+```rust
+use responses::prompt::TemplateSet;
+
+// Load and validate all templates in production
+async fn validate_template_environment() -> Result<TemplateSet> {
+    let template_set = TemplateSet::from_dir("templates")?;
+    
+    // Validate each template's dependencies
+    for template_name in template_set.list_templates() {
+        println!("Validating template: {}", template_name);
+        
+        // Templates are automatically validated when rendered through TemplateSet
+        // The base_path is handled automatically
+    }
+    
+    println!("✅ All templates validated successfully");
+    Ok(template_set)
+}
+
+// Use in application startup
+let validated_templates = validate_template_environment().await?;
 ```
 
 ### Internationalization (i18n)
@@ -884,7 +1264,7 @@ let response = client
     .await?;
 
 // Explicit locale
-let template = MarkdownPrompt::load("prompts/system.md")?
+let template = PromptTemplate::load("prompts/system.md")?
     .with_locale("ja")?
     .var("role", "アシスタント");
 ```
@@ -897,7 +1277,7 @@ Templates support variables, conditionals, loops, and includes for powerful comp
 
 ```rust
 // Simple variables
-let template = MarkdownPrompt::load("prompts/greeting.md")?
+let template = PromptTemplate::load("prompts/greeting.md")?
     .var("name", "Alice")
     .var("role", "engineer")
     .var("years_experience", 5);
@@ -910,7 +1290,7 @@ let user_data = json!({
     "skills": ["Rust", "Python", "JavaScript"]
 });
 
-let template = MarkdownPrompt::load("prompts/profile.md")?
+let template = PromptTemplate::load("prompts/profile.md")?
     .var("user", user_data);
 ```
 
@@ -1008,7 +1388,7 @@ Let's explore the advanced patterns and optimizations...
 #### Using Conversation Templates
 
 ```rust
-use responses::prompt::conversation::ConversationTemplate;
+use responses::prompt::ConversationTemplate;
 
 // Load and configure conversation template
 let conversation = ConversationTemplate::load("prompts/conversations/learning_session.md")?
@@ -1095,19 +1475,19 @@ pub enum Error {
         #[source] source: std::io::Error 
     },
     
-    #[error("Template variable not found: {name}")]
+    #[error("Template variable not found: {name}\nHelp: Define this variable using .var(\"{name}\", value) or ensure it's included in your template variables.")]
     TemplateVariableNotFound { name: String },
     
-    #[error("Template parsing failed: {0}")]
+    #[error("Template parsing failed: {0}\nHelp: Check your template syntax for proper Handlebars formatting and valid YAML frontmatter.")]
     TemplateParsing(String),
     
-    #[error("Required template variables missing: {variables:?}")]
+    #[error("Required template variables missing: {variables:?}\nHelp: Define these variables using .var(name, value) before rendering the template.")]
     RequiredVariablesMissing { variables: Vec<String> },
     
-    #[error("Locale not found: {locale}")]
+    #[error("Locale not found: {locale}\nHelp: Ensure the locale directory exists at locales/{locale}/ with the required YAML files.")]
     LocaleNotFound { locale: String },
     
-    #[error("i18n key not found: {key} in locale {locale}")]
+    #[error("i18n key not found: {key} in locale {locale}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml")]
     I18nKeyNotFound { key: String, locale: String },
     
     #[error("Function call parameter parsing failed for '{function_name}': {source}")]
@@ -1162,11 +1542,12 @@ impl Display for Refusal {
 ### Complete Text Generation Example
 
 ```rust
-use responses::{azure, Messages};
+use responses::{azure, Messages, Client};
 
 #[tokio::main]
 async fn main() -> responses::Result<()> {
-    let client = azure().from_env()?.build_client()?;
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
     
     let conversation = Messages::new()
         .system("You are a helpful programming mentor")
@@ -1192,7 +1573,7 @@ async fn main() -> responses::Result<()> {
 ### Complete Structured Output Example
 
 ```rust
-use responses::{azure, Messages};
+use responses::{azure, Messages, Client};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -1206,7 +1587,8 @@ struct CodeAnalysis {
 
 #[tokio::main]
 async fn main() -> responses::Result<()> {
-    let client = azure().from_env()?.build_client()?;
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
     
     let analysis = client
         .structured::<CodeAnalysis>()
@@ -1238,7 +1620,8 @@ def fibonacci(n):
 ### Tool Usage Example
 
 ```rust
-use responses::{azure, tool, types::ToolChoice};
+use responses::{azure, tool, types::ToolChoice, Client};
+use responses::provider::ProviderBuilder;
 
 #[tool]
 /// Get weather information for a city
@@ -1279,7 +1662,8 @@ async fn calculate(
 
 #[tokio::main]
 async fn main() -> responses::Result<()> {
-    let client = azure().from_env()?.build_client()?;
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
     
     let response = client
         .text()
@@ -1313,7 +1697,7 @@ async fn main() -> responses::Result<()> {
 ### Enhanced Function Calling Example
 
 ```rust
-use responses::{azure, tool, types::ToolChoice};
+use responses::{azure, tool, types::ToolChoice, Client};
 
 #[tool]
 /// Get current weather information
@@ -1345,7 +1729,8 @@ async fn calculate(
 
 #[tokio::main]
 async fn main() -> responses::Result<()> {
-    let client = azure().from_env()?.build_client()?;
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
     
     let response = client
         .text()
@@ -1380,6 +1765,243 @@ async fn main() -> responses::Result<()> {
     Ok(())
 }
 ```
+
+### Complete Enterprise Template System Example
+
+This example showcases all the advanced template features working together in a production environment.
+
+#### Template Directory Structure
+
+```
+templates/
+├── system_prompts/
+│   └── ai_assistant.md          # Main system prompt
+├── shared/
+│   ├── header.md               # Shared header
+│   ├── footer.md               # Shared footer
+│   └── guidelines.md           # Common guidelines
+├── conversations/
+│   └── onboarding.md           # Multi-turn conversation
+└── locales/
+    ├── en/
+    │   └── system.yaml         # English strings
+    └── es/
+        └── system.yaml         # Spanish strings
+```
+
+#### Main System Template (`templates/system_prompts/ai_assistant.md`)
+
+```markdown
+---
+required_variables:
+  - "user_name"
+  - "user_role"
+  - "specialization"
+includes:
+  - "shared/header.md"
+  - "shared/guidelines.md"
+  - "shared/footer.md"
+i18n_key: "system.main_prompt"
+variables:
+  assistant_name: "Claude"
+  experience_level: "expert"
+---
+
+{{> shared/header.md}}
+
+# {{i18n "system.title"}}
+
+{{i18n "system.greeting" user_name=user_name assistant_name=assistant_name}}
+
+## {{i18n "system.role_assignment"}}
+You are an {{experience_level}} {{specialization}} assistant working with {{user_name}}, who is a {{user_role}}.
+
+{{> shared/guidelines.md}}
+
+## {{i18n "system.capabilities"}}
+{{i18n "system.capabilities_text" specialization=specialization}}
+
+{{> shared/footer.md}}
+```
+
+#### Locale Files
+
+```yaml
+# locales/en/system.yaml
+system:
+  title: "AI Assistant Configuration"
+  greeting: "Hello {user_name}, I'm {assistant_name}, your AI assistant."
+  role_assignment: "Role Assignment"
+  capabilities: "My Capabilities"
+  capabilities_text: "I specialize in {specialization} and can help with complex problem-solving, analysis, and guidance."
+
+shared:
+  header: "Welcome to your personalized AI assistant experience."
+  footer: "I'm here to help you succeed. Let's get started!"
+  
+guidelines:
+  title: "Interaction Guidelines"
+  be_helpful: "Always be helpful and supportive"
+  ask_questions: "Ask clarifying questions when needed"
+  provide_examples: "Provide concrete examples when possible"
+```
+
+```yaml
+# locales/es/system.yaml
+system:
+  title: "Configuración del Asistente IA"
+  greeting: "Hola {user_name}, soy {assistant_name}, tu asistente de IA."
+  role_assignment: "Asignación de Rol"
+  capabilities: "Mis Capacidades"
+  capabilities_text: "Me especializo en {specialization} y puedo ayudar con resolución de problemas complejos, análisis y orientación."
+
+shared:
+  header: "Bienvenido a tu experiencia personalizada de asistente IA."
+  footer: "Estoy aquí para ayudarte a tener éxito. ¡Comencemos!"
+  
+guidelines:
+  title: "Pautas de Interacción"
+  be_helpful: "Siempre ser útil y solidario"
+  ask_questions: "Hacer preguntas aclaratorias cuando sea necesario"
+  provide_examples: "Proporcionar ejemplos concretos cuando sea posible"
+```
+
+#### Production Application Code
+
+```rust
+use responses::{azure, Client, Messages};
+use responses::prompt::TemplateSet;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> responses::Result<()> {
+    // === INITIALIZE TEMPLATE SYSTEM ===
+    
+    let template_set = TemplateSet::from_dir("templates")?;
+    
+    // Validate all templates at startup
+    println!("📋 Available templates: {:?}", template_set.list_templates());
+    println!("💬 Available conversations: {:?}", template_set.list_conversations());
+    
+    // === MULTI-LOCALE SUPPORT ===
+    
+    let user_locale = std::env::var("USER_LOCALE").unwrap_or_else(|_| "en".to_string());
+    let localized_templates = template_set.with_locale(&user_locale)?;
+    
+    println!("🌐 Using locale: {}", localized_templates.current_locale());
+    
+    // === CLIENT SETUP ===
+    
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
+    
+    // === RENDER SYSTEM PROMPT WITH VALIDATION ===
+    
+    let user_vars = json!({
+        "user_name": "Dr. Sarah Chen",
+        "user_role": "Senior Data Scientist",
+        "specialization": "machine learning"
+    });
+    
+    // This automatically validates required variables and includes
+    let system_prompt = localized_templates.render("system_prompts/ai_assistant", &user_vars)?;
+    
+    println!("✅ System prompt rendered successfully");
+    println!("📄 Length: {} characters", system_prompt.len());
+    
+    // === FLUENT API WITH TEMPLATES ===
+    
+    let conversation = Messages::new()
+        .system(system_prompt)
+        .user("I'm working on a recommendation system project. What approach would you suggest for handling cold start problems?");
+    
+    // === CONVERSATION TEMPLATE INTEGRATION ===
+    
+    let onboarding_conversation = localized_templates.render_conversation("onboarding", &user_vars)?;
+    
+    let extended_conversation = conversation
+        .extend(onboarding_conversation)
+        .user("Let's start with collaborative filtering approaches.");
+    
+    // === API REQUEST ===
+    
+    let response = client
+        .text()
+        .model("gpt-4o")
+        .messages(extended_conversation)
+        .send()
+        .await?;
+    
+    if let Some(Ok(text)) = response.message {
+        println!("🤖 Assistant Response:");
+        println!("{}", text);
+    }
+    
+    Ok(())
+}
+
+// === ERROR HANDLING WITH TEMPLATE VALIDATION ===
+
+async fn handle_template_errors() -> responses::Result<()> {
+    let template_set = TemplateSet::from_dir("templates")?;
+    
+    // This will show specific validation errors
+    let incomplete_vars = json!({
+        "user_name": "Alice"
+        // Missing required: user_role, specialization
+    });
+    
+    match template_set.render("system_prompts/ai_assistant", &incomplete_vars) {
+        Ok(_) => println!("✅ Template rendered successfully"),
+        Err(responses::Error::RequiredVariablesMissing { variables }) => {
+            println!("❌ Missing required variables: {:?}", variables);
+            println!("💡 Please provide: user_role, specialization");
+        }
+        Err(e) => println!("❌ Template error: {}", e),
+    }
+    
+    Ok(())
+}
+
+// === PRODUCTION DEPLOYMENT VALIDATION ===
+
+async fn validate_production_templates() -> responses::Result<()> {
+    println!("🔍 Validating production template environment...");
+    
+    // Load templates
+    let template_set = TemplateSet::from_dir("templates")?;
+    
+    // Test each locale
+    for locale in ["en", "es", "ja"] {
+        println!("  🌐 Testing locale: {}", locale);
+        
+        let localized_set = template_set.with_locale(locale)?;
+        
+        // Test sample rendering
+        let test_vars = json!({
+            "user_name": "Test User",
+            "user_role": "Developer", 
+            "specialization": "software engineering"
+        });
+        
+        let _rendered = localized_set.render("system_prompts/ai_assistant", &test_vars)?;
+        println!("    ✅ Locale {} validated", locale);
+    }
+    
+    println!("🎉 All templates validated for production deployment!");
+    Ok(())
+}
+```
+
+This comprehensive example demonstrates:
+
+- **🔒 Production Validation**: Required variables and includes validation
+- **🌐 Multi-locale Support**: Automatic locale switching for all templates  
+- **📁 Organized Architecture**: Clean template directory structure with shared components
+- **🔗 Dependency Management**: Automatic include resolution with base path
+- **⚡ High Performance**: Template caching and efficient rendering
+- **🛡️ Error Handling**: Comprehensive validation with helpful error messages
+- **🔄 Fluent Integration**: Seamless integration with Messages API and client requests
 
 ---
 

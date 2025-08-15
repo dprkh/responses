@@ -1,9 +1,4 @@
-use crate::{
-    client::Client,
-    error::Result,
-    providers::{AzureProvider, AzureBuilder},
-    provider::ProviderBuilder,
-};
+use crate::providers::AzureBuilder;
 
 pub struct ClientBuilder;
 
@@ -14,10 +9,7 @@ impl ClientBuilder {
 }
 
 impl AzureBuilder {
-    pub fn build_client(self) -> Result<Client<AzureProvider>> {
-        let provider = self.build()?;
-        Ok(Client::new(provider))
-    }
+    // build_client method removed - use .build()? followed by Client::new(provider) instead
 }
 
 pub fn azure() -> AzureBuilder {

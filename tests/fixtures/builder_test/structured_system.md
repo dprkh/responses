@@ -1,0 +1,1 @@
+Analyze this {{content_type}} and provide {{analysis_depth}} analysis.

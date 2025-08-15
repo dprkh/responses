@@ -182,6 +182,12 @@ fn generate_handler_impl(
             }
         }
         
+        impl From<#handler_name> for responses::types::Tool {
+            fn from(handler: #handler_name) -> responses::types::Tool {
+                handler.tool()
+            }
+        }
+        
         impl #handler_name {
             fn build_schema() -> schemars::Schema {
                 use serde_json::{json, Value, Map};

@@ -1,4 +1,5 @@
 use crate::types::{Input, InputMessage, Role};
+use std::collections::HashMap;
 
 /// A builder for constructing and managing conversation histories.
 /// 
@@ -25,6 +26,9 @@ use crate::types::{Input, InputMessage, Role};
 #[derive(Clone, Debug, Default)]
 pub struct Messages {
     messages: Vec<Input>,
+    // Fluent API support
+    accumulated_variables: HashMap<String, serde_json::Value>,
+    current_locale: Option<String>,
 }
 
 impl Messages {
@@ -32,6 +36,8 @@ impl Messages {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
         }
     }
     
@@ -85,29 +91,6 @@ impl Messages {
         self
     }
     
-    /// Add a system message using a multiline string literal for better formatting.
-    /// This is equivalent to `system()` but provides clearer intent for multiline content.
-    pub fn system_prompt<S: Into<String>>(self, content: S) -> Self {
-        self.system(content)
-    }
-    
-    /// Add a user message using a multiline string literal for better formatting.
-    /// This is equivalent to `user()` but provides clearer intent for multiline content.
-    pub fn user_message<S: Into<String>>(self, content: S) -> Self {
-        self.user(content)
-    }
-    
-    /// Add an assistant message using a multiline string literal for better formatting.
-    /// This is equivalent to `assistant()` but provides clearer intent for multiline content.
-    pub fn assistant_response<S: Into<String>>(self, content: S) -> Self {
-        self.assistant(content)
-    }
-    
-    /// Add a developer message using a multiline string literal for better formatting.
-    /// This is equivalent to `developer()` but provides clearer intent for multiline content.
-    pub fn developer_note<S: Into<String>>(self, content: S) -> Self {
-        self.developer(content)
-    }
     
     /// Add multiple messages at once.
     pub fn add_messages<I, S>(mut self, messages: I) -> Self 
@@ -138,7 +121,11 @@ impl Messages {
     
     /// Create a Messages from existing inputs.
     pub fn from_inputs(inputs: Vec<Input>) -> Self {
-        Self { messages: inputs }
+        Self { 
+            messages: inputs,
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
+        }
     }
     
     /// Create Messages from input messages.
@@ -146,17 +133,52 @@ impl Messages {
         let inputs = messages.into_iter()
             .map(Input::Message)
             .collect();
-        Self { messages: inputs }
+        Self { 
+            messages: inputs,
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
+        }
     }
     
     /// Convert to raw Input vector (consumes self).
+    /// Templates are rendered using accumulated variables.
     pub fn into_inputs(self) -> Vec<Input> {
-        self.messages
+        self.render_inputs()
     }
     
     /// Get a reference to the inputs without consuming.
     pub fn inputs(&self) -> &[Input] {
         &self.messages
+    }
+    
+    /// Get rendered inputs, lazily evaluating any templates.
+    /// Templates are rendered using accumulated variables.
+    pub fn render_inputs(&self) -> Vec<Input> {
+        self.messages.iter().map(|input| {
+            match input {
+                Input::Message(msg) => Input::Message(msg.clone()),
+                Input::Template(template_input) => {
+                    // Apply accumulated variables and render the template
+                    let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template_input.template.clone());
+                    let template_with_locale = if let Some(ref locale) = self.current_locale {
+                        template_with_vars.clone().with_locale(locale).unwrap_or(template_with_vars)
+                    } else {
+                        template_with_vars
+                    };
+                    
+                    match template_with_locale.render_with_vars() {
+                        Ok(content) => Input::Message(InputMessage {
+                            role: template_input.role.clone(),
+                            content,
+                        }),
+                        Err(_) => Input::Message(InputMessage {
+                            role: template_input.role.clone(),
+                            content: format!("<!-- Template rendering failed -->"),
+                        }),
+                    }
+                }
+            }
+        }).collect()
     }
     
     /// Get the number of messages.
@@ -189,6 +211,8 @@ impl Messages {
         
         Messages {
             messages: self.messages[start..].to_vec(),
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
         }
     }
     
@@ -197,6 +221,8 @@ impl Messages {
         let end = std::cmp::min(n, self.messages.len());
         Messages {
             messages: self.messages[..end].to_vec(),
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
         }
     }
     
@@ -212,8 +238,10 @@ impl Messages {
         let filtered: Vec<Input> = self.messages
             .iter()
             .filter(|input| {
-                let Input::Message(msg) = input;
-                msg.role == role
+                match input {
+                    Input::Message(msg) => msg.role == role,
+                    Input::Template(template_input) => template_input.role == role,
+                }
             })
             .cloned()
             .collect();
@@ -226,6 +254,8 @@ impl Messages {
     pub fn as_template(&self) -> Messages {
         self.clone()
     }
+    
+    
 
     /// Create Messages from a conversation template file.
     pub fn from_conversation_template<P: AsRef<std::path::Path>>(path: P, vars: &serde_json::Value) -> crate::error::Result<Self> {
@@ -233,32 +263,70 @@ impl Messages {
         conversation.render(vars)
     }
 
-    /// Add a system message from a template file with variables.
-    pub fn system_from_template<P: AsRef<std::path::Path>>(self, path: P, vars: &serde_json::Value) -> crate::error::Result<Self> {
+
+    // === FLUENT API METHODS ===
+    // Support for builder pattern with template variables
+
+    /// Add a system message from a markdown template file (fluent API)
+    pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.system(content))
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.system_from_template_internal(template)
     }
 
-    /// Add a user message from a template file with variables.
-    pub fn user_from_template<P: AsRef<std::path::Path>>(self, path: P, vars: &serde_json::Value) -> crate::error::Result<Self> {
+    /// Add an assistant message from a markdown template file (fluent API)
+    pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.user(content))
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.assistant_from_template_internal(template)
     }
 
-    /// Add an assistant message from a template file with variables.
-    pub fn assistant_from_template<P: AsRef<std::path::Path>>(self, path: P, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.assistant(content))
+    /// Set a template variable (fluent API)
+    pub fn var<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Self {
+        if let Ok(json_value) = serde_json::to_value(value) {
+            self.accumulated_variables.insert(key.into(), json_value);
+        }
+        self
     }
 
-    /// Add a developer message from a template file with variables.
-    pub fn developer_from_template<P: AsRef<std::path::Path>>(self, path: P, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.developer(content))
+    /// Set the locale for template rendering (fluent API)
+    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+        self.current_locale = Some(locale.into());
+        Ok(self)
+    }
+
+    // Internal helper methods
+    fn system_from_template_internal(mut self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        // Store template for lazy evaluation instead of rendering immediately
+        self.messages.push(crate::types::Input::Template(crate::types::TemplateInput {
+            role: crate::types::Role::System,
+            template,
+        }));
+        Ok(self)
+    }
+
+    fn assistant_from_template_internal(mut self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        // Store template for lazy evaluation instead of rendering immediately
+        self.messages.push(crate::types::Input::Template(crate::types::TemplateInput {
+            role: crate::types::Role::Assistant,
+            template,
+        }));
+        Ok(self)
+    }
+
+    fn apply_accumulated_variables_static(vars: &HashMap<String, serde_json::Value>, mut template: crate::prompt::PromptTemplate) -> crate::prompt::PromptTemplate {
+        for (key, value) in vars {
+            template = template.var(key, value.clone());
+        }
+        template
     }
 }
 
@@ -370,13 +438,13 @@ Can you explain what this does?"#;
     #[test]
     fn test_multiline_convenience_methods() {
         let conversation = Messages::new()
-            .system_prompt(r#"You are a coding assistant.
+            .system(r#"You are a coding assistant.
 Help users with programming questions."#)
-            .user_message(r#"How do I:
+            .user(r#"How do I:
 1. Create a vector
 2. Add elements
 3. Iterate over it"#)
-            .assistant_response(r#"Here's how:
+            .assistant(r#"Here's how:
 
 ```rust
 let mut vec = Vec::new();
@@ -389,13 +457,17 @@ for item in &vec {
         assert_eq!(conversation.len(), 3);
         
         // All methods should work the same as their base counterparts
-        let Input::Message(msg0) = &conversation.inputs()[0];
-        assert!(msg0.content.contains("coding assistant"));
+        let inputs = conversation.render_inputs();
+        if let Input::Message(msg0) = &inputs[0] {
+            assert!(msg0.content.contains("coding assistant"));
+        }
         
-        let Input::Message(msg1) = &conversation.inputs()[1];
-        assert!(msg1.content.contains("Create a vector"));
+        if let Input::Message(msg1) = &inputs[1] {
+            assert!(msg1.content.contains("Create a vector"));
+        }
         
-        let Input::Message(msg2) = &conversation.inputs()[2];
-        assert!(msg2.content.contains("Vec::new()"));
+        if let Input::Message(msg2) = &inputs[2] {
+            assert!(msg2.content.contains("Vec::new()"));
+        }
     }
 }

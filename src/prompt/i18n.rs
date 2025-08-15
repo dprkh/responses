@@ -325,7 +325,9 @@ impl LocaleData {
     /// Format a percentage according to locale conventions.
     pub fn format_percentage(&self, value: f64) -> String {
         let percentage = value * 100.0;
-        format!("{}%", self.format_number(percentage).trim_end_matches(".00"))
+        let formatted = self.format_number(percentage);
+        let trimmed = formatted.trim_end_matches(".00").trim_end_matches(".0");
+        format!("{}%", trimmed)
     }
 
     /// Get text direction for this locale.

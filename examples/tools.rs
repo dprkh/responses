@@ -1,5 +1,6 @@
 use dotenv::dotenv;
-use responses::{azure, tool, types::ToolChoice, functions::FunctionHandler};
+use responses::{azure, Client, tool, types::ToolChoice, functions::FunctionHandler};
+use responses::provider::ProviderBuilder;
 
 #[tool]
 /// Get weather information for a city
@@ -37,7 +38,8 @@ async fn calculate(a: f64, b: f64, operation: String) -> responses::Result<f64> 
 async fn main() -> responses::Result<()> {
     dotenv().ok();
 
-    let client = azure().from_env()?.build_client()?;
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
 
     let weather_handler = get_weather_handler();
     let calc_handler = calculate_handler();
@@ -47,7 +49,7 @@ async fn main() -> responses::Result<()> {
         .model("gpt-4o")
         .system("You are a helpful assistant with weather and calculation capabilities. Use the available tools to help users.")
         .user("What's the weather in Tokyo, Japan and what's 15 * 23?")
-        .tools(vec![weather_handler.tool(), calc_handler.tool()])
+        .tools(vec![weather_handler.clone().into(), calc_handler.clone().into()])
         .tool_choice(ToolChoice::Auto)
         .send()
         .await?;

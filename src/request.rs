@@ -6,12 +6,16 @@ use crate::{
     types::{Input, InputMessage, Role, Tool, ToolChoice},
     Options,
 };
+use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub struct TextRequestBuilder<'a, P: Provider> {
     client: &'a crate::Client<P>,
     options: Options,
+    // Fluent API support
+    accumulated_variables: HashMap<String, serde_json::Value>,
+    current_locale: Option<String>,
 }
 
 impl<'a, P: Provider> TextRequestBuilder<'a, P> {
@@ -19,12 +23,35 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
         Self {
             client,
             options: Options::default(),
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
         }
     }
     
     pub fn model<S: Into<String>>(mut self, model: S) -> Self {
         self.options.model = Some(model.into());
         self
+    }
+    
+    /// Set model using a static string reference
+    /// 
+    /// # Example
+    /// ```rust,no_run
+    /// # use responses::{azure, Client};
+    /// # use responses::provider::ProviderBuilder;
+    /// # #[tokio::main] async fn main() -> responses::Result<()> {
+    /// let provider = azure().from_env()?.build()?;
+    /// let client = Client::new(provider);
+    /// let response = client.text()
+    ///     .with_model("gpt-4o")
+    ///     .user("Hello")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_model(self, model: &'static str) -> Self {
+        self.model(model)
     }
     
     /// Add a system message. Supports multiline strings seamlessly.
@@ -129,32 +156,64 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
         self
     }
     
-    /// Add a system message from a template file with variables.
-    pub fn system_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
+
+    // === FLUENT API METHODS ===
+    // Support for builder pattern with template variables
+
+    /// Add a system message from a markdown template file (fluent API)
+    pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.system_from_template_internal(template)
+    }
+
+    /// Add an assistant message from a markdown template file (fluent API)
+    pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
+        let template = crate::prompt::PromptTemplate::load(path)?;
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.assistant_from_template_internal(template)
+    }
+
+    /// Set a template variable (fluent API)
+    pub fn var<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Self {
+        if let Ok(json_value) = serde_json::to_value(value) {
+            self.accumulated_variables.insert(key.into(), json_value);
+        }
+        self
+    }
+
+    /// Set the locale for template rendering (fluent API)
+    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+        self.current_locale = Some(locale.into());
+        Ok(self)
+    }
+
+    // Internal helper methods
+    fn system_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
+        let content = template_with_vars.render_with_vars()?;
         Ok(self.system(content))
     }
 
-    /// Add a user message from a template file with variables.
-    pub fn user_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.user(content))
-    }
-
-    /// Add an assistant message from a template file with variables.
-    pub fn assistant_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
+    fn assistant_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
+        let content = template_with_vars.render_with_vars()?;
         Ok(self.assistant(content))
     }
 
-    /// Add a developer message from a template file with variables.
-    pub fn developer_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.developer(content))
+    fn apply_accumulated_variables_static(vars: &HashMap<String, serde_json::Value>, mut template: crate::prompt::PromptTemplate) -> crate::prompt::PromptTemplate {
+        for (key, value) in vars {
+            template = template.var(key, value.clone());
+        }
+        template
     }
 
     pub async fn send(self) -> Result<Response<String>> {
@@ -167,6 +226,9 @@ pub struct StructuredRequestBuilder<'a, P: Provider, T> {
     name: String,
     options: Options,
     _phantom: std::marker::PhantomData<T>,
+    // Fluent API support
+    accumulated_variables: HashMap<String, serde_json::Value>,
+    current_locale: Option<String>,
 }
 
 impl<'a, P: Provider, T> StructuredRequestBuilder<'a, P, T> 
@@ -179,6 +241,8 @@ where
             name,
             options: Options::default(),
             _phantom: std::marker::PhantomData,
+            accumulated_variables: HashMap::new(),
+            current_locale: None,
         }
     }
     
@@ -289,32 +353,64 @@ where
         self
     }
     
-    /// Add a system message from a template file with variables.
-    pub fn system_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
+
+    // === FLUENT API METHODS ===
+    // Support for builder pattern with template variables
+
+    /// Add a system message from a markdown template file (fluent API)
+    pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.system_from_template_internal(template)
+    }
+
+    /// Add an assistant message from a markdown template file (fluent API)
+    pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
+        let template = crate::prompt::PromptTemplate::load(path)?;
+        let template = if let Some(ref locale) = self.current_locale {
+            template.with_locale(locale)?
+        } else {
+            template
+        };
+        self.assistant_from_template_internal(template)
+    }
+
+    /// Set a template variable (fluent API)
+    pub fn var<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Self {
+        if let Ok(json_value) = serde_json::to_value(value) {
+            self.accumulated_variables.insert(key.into(), json_value);
+        }
+        self
+    }
+
+    /// Set the locale for template rendering (fluent API)
+    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+        self.current_locale = Some(locale.into());
+        Ok(self)
+    }
+
+    // Internal helper methods
+    fn system_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
+        let content = template_with_vars.render_with_vars()?;
         Ok(self.system(content))
     }
 
-    /// Add a user message from a template file with variables.
-    pub fn user_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.user(content))
-    }
-
-    /// Add an assistant message from a template file with variables.
-    pub fn assistant_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
+    fn assistant_from_template_internal(self, template: crate::prompt::PromptTemplate) -> crate::error::Result<Self> {
+        let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template);
+        let content = template_with_vars.render_with_vars()?;
         Ok(self.assistant(content))
     }
 
-    /// Add a developer message from a template file with variables.
-    pub fn developer_from_template<PathType: AsRef<std::path::Path>>(self, path: PathType, vars: &serde_json::Value) -> crate::error::Result<Self> {
-        let template = crate::prompt::PromptTemplate::load(path)?;
-        let content = template.render(vars)?;
-        Ok(self.developer(content))
+    fn apply_accumulated_variables_static(vars: &HashMap<String, serde_json::Value>, mut template: crate::prompt::PromptTemplate) -> crate::prompt::PromptTemplate {
+        for (key, value) in vars {
+            template = template.var(key, value.clone());
+        }
+        template
     }
 
     pub async fn send(self) -> Result<Response<T>> {

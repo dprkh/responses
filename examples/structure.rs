@@ -1,5 +1,6 @@
 use dotenv::dotenv;
-use responses::azure;
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -19,7 +20,8 @@ struct MathResponse {
 async fn main() {
     dotenv().ok();
 
-    let client = azure().from_env().unwrap().build_client().unwrap();
+    let provider = azure().from_env().unwrap().build().unwrap();
+    let client = Client::new(provider);
 
     let response = client
         .structured::<MathResponse>()

@@ -17,5 +17,7 @@ tasks:
 
 current_tasks: "Actualmente tienes {count} {tasks} pendientes de revisión."
 
+status_report: "Activos: {active}, Progreso: {progress}"
+
 greeting: "¡Hola! Bienvenido al sistema"
 farewell: "Adiós"

@@ -1,17 +1,19 @@
 use dotenv::dotenv;
 
-use responses::azure;
+use responses::{azure, Client};
+use responses::provider::ProviderBuilder;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     dotenv().ok();
 
     // Using fluent API with Azure provider
-    let client = azure()
+    let provider = azure()
         .from_env()
         .unwrap()
-        .build_client()
+        .build()
         .unwrap();
+    let client = Client::new(provider);
 
     let response = client
         .text()

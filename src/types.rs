@@ -121,6 +121,15 @@ pub enum Role {
 pub enum Input {
     #[serde(rename = "message")]
     Message(InputMessage),
+    
+    #[serde(skip)]
+    Template(TemplateInput),
+}
+
+#[derive(Clone, Debug)]
+pub struct TemplateInput {
+    pub role: Role,
+    pub template: crate::prompt::PromptTemplate,
 }
 
 #[derive(Clone, Debug, Serialize)]
