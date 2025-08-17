@@ -821,21 +821,21 @@ Always format code blocks properly and explain assumptions."#)
 
 ```rust
 let conversation = Messages::new()
-    .system_prompt(r#"You are a senior software architect.
+    .system(r#"You are a senior software architect.
 
 Guidelines:
 - Consider scalability and performance
 - Suggest appropriate technologies
 - Ask clarifying questions when needed
 - Provide concrete examples"#)
-    .user_message(r#"I need to design a chat system that handles:
+    .user(r#"I need to design a chat system that handles:
 - 10,000 concurrent users
 - Message history storage
 - File sharing
 - Group chats up to 100 members
 
 What architecture would you recommend?"#)
-    .assistant_response(r#"For this scale, I'd recommend:
+    .assistant(r#"For this scale, I'd recommend:
 
 **Core Components:**
 1. WebSocket Gateway (Node.js/Go)
@@ -1358,7 +1358,7 @@ let validated_templates = validate_template_environment().await?;
 
 ### Internationalization (i18n)
 
-Templates support full internationalization with locale-specific strings and formatting.
+Templates support full internationalization with locale-specific strings and formatting. Locales must be explicitly set using `.with_locale()` - there is no automatic environment variable detection.
 
 #### LocaleManager API
 
@@ -1517,18 +1517,21 @@ Progress: {{format_number progress style="percent"}}
 
 #### Using Localized Templates
 
+All locale setting is explicit - you must specify the desired locale:
+
 ```rust
-// Auto-detect locale from environment (LANG=es)
+// Set locale for request builder
 let response = client
     .text()
     .model("gpt-4o")
     .system_from_md("prompts/assistant.md")?
+    .with_locale("es")?
     .var("role", "asistente")
     .var("task_count", 3)
     .send()
     .await?;
 
-// Explicit locale
+// Set locale for template directly
 let template = PromptTemplate::load("prompts/system.md")?
     .with_locale("ja")?
     .var("role", "アシスタント");
@@ -2226,6 +2229,7 @@ async fn main() -> responses::Result<()> {
     println!("💬 Available conversations: {:?}", template_set.list_conversations());
     
     // === MULTI-LOCALE SUPPORT ===
+    // Note: Manual environment variable reading (application code)
     
     let user_locale = std::env::var("USER_LOCALE").unwrap_or_else(|_| "en".to_string());
     let localized_templates = template_set.with_locale(&user_locale)?;
