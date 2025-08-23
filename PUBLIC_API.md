@@ -1,6 +1,6 @@
 # Responses API Documentation
 
-A comprehensive Rust library for Azure OpenAI's Responses API, providing a modern fluent DSL with template support for text generation and structured outputs.
+Rust library for Azure OpenAI's Responses API with fluent DSL, templates, and structured outputs.
 
 ## Table of Contents
 
@@ -27,6 +27,11 @@ A comprehensive Rust library for Azure OpenAI's Responses API, providing a moder
   - [Internationalization (i18n)](#internationalization-i18n)
   - [Template Variables and Composition](#template-variables-and-composition)
   - [Conversation Templates](#conversation-templates)
+- [LLM-as-a-Judge](#llm-as-a-judge)
+  - [Basic Judge Usage](#basic-judge-usage)
+  - [Template-Based Evaluation](#template-based-evaluation)
+  - [Test Assertions](#test-assertions)
+- [Temperature Control](#temperature-control)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
 
@@ -44,21 +49,18 @@ tokio = { version = "1.0", features = ["rt", "macros"] }
 # Use responses::schemars instead of adding a separate schemars dependency
 ```
 
-Set up environment variables for Azure OpenAI:
+Environment variables:
 
 ```bash
 export AZURE_OPENAI_API_KEY="your-api-key"
 export AZURE_OPENAI_RESOURCE="your-resource-name"
 export AZURE_OPENAI_API_VERSION="2025-03-01-preview"
+export RESPONSES_LOCALES_PATH="custom/locales/path,another/path"  # Optional
 ```
 
 ## Client Setup
 
 ### Azure Configuration
-
-This library provides Azure OpenAI integration only.
-
-#### Quick Setup
 
 ```rust
 use responses::{azure, Client};
@@ -76,128 +78,41 @@ async fn main() -> responses::Result<()> {
 }
 ```
 
-#### Client API
-
-The `Client<P>` provides additional methods for accessing the underlying provider:
-
+**Client API:**
 ```rust
 impl<P: Provider> Client<P> {
-    /// Create a new client with the given provider
     pub fn new(provider: P) -> Self;
-    
-    /// Get a reference to the underlying provider
     pub fn provider(&self) -> &P;
-    
-    /// Create a text request builder
     pub fn text(&self) -> TextRequestBuilder<'_, P>;
-    
-    /// Create a structured output request builder
-    pub fn structured<T>(&self) -> StructuredRequestBuilder<'_, P, T>
-    where T: JsonSchema + for<'a> Deserialize<'a>;
-    
-    /// Create a structured output request builder with custom schema name
-    pub fn structured_with_name<T>(&self, name: String) -> StructuredRequestBuilder<'_, P, T>
-    where T: JsonSchema + for<'a> Deserialize<'a>;
+    pub fn structured<T>(&self) -> StructuredRequestBuilder<'_, P, T>;
+    pub fn structured_with_name<T>(&self, name: String) -> StructuredRequestBuilder<'_, P, T>;
 }
 ```
 
-**Usage Example:**
-
+**Configuration options:**
 ```rust
+// From environment
 let provider = azure().from_env()?.build()?;
-let client = Client::new(provider);
 
-// Access the underlying provider
-let provider_name = client.provider().name();
-println!("Using provider: {}", provider_name);
-```
-
-#### Manual Configuration
-
-```rust
-use responses::{azure, providers::AzureConfig, Client};
-use responses::provider::ProviderBuilder;
-
+// Manual config  
 let config = AzureConfig {
-    api_key: "your-api-key".to_string(),
-    resource: "your-resource".to_string(),
+    api_key: "key".to_string(),
+    resource: "resource".to_string(), 
     api_version: "2025-03-01-preview".to_string(),
 };
+let provider = azure().with_config(config).build()?;
 
+// Builder pattern
 let provider = azure()
-    .with_config(config)
-    .build()?;
-let client = Client::new(provider);
-```
-
-#### Builder Pattern
-
-```rust
-use responses::{azure, Client};
-use responses::provider::ProviderBuilder;
-
-let provider = azure()
-    .api_key("your-api-key")
-    .resource("your-resource")
+    .api_key("key")
+    .resource("resource")
     .api_version("2025-03-01-preview")
     .build()?;
-let client = Client::new(provider);
-```
-
-#### AzureConfigBuilder API
-
-The builder pattern creates an `AzureConfigBuilder` when you call `.api_key()`, which provides these methods:
-
-```rust
-impl AzureConfigBuilder {
-    /// Set the Azure OpenAI resource name
-    pub fn resource<S: Into<String>>(self, resource: S) -> Self;
-    
-    /// Set the API version (defaults to "2025-03-01-preview" if not specified)
-    pub fn api_version<S: Into<String>>(self, api_version: S) -> Self;
-    
-    /// Build the configured AzureProvider
-    pub fn build(self) -> Result<AzureProvider>;
-}
-```
-
-**Usage Example:**
-
-```rust
-use responses::{azure, Client};
-use responses::provider::ProviderBuilder;
-
-// Complete builder chain
-let provider = azure()
-    .api_key("your-api-key")
-    .resource("your-resource")
-    .api_version("2025-03-01-preview")
-    .build()?; // Returns AzureProvider
-
-let client = Client::new(provider);
-```
-
-#### Default Implementations
-
-Several types implement `Default` for convenient initialization:
-
-```rust
-// AzureBuilder implements Default
-let builder = AzureBuilder::default();
-// Equivalent to: AzureBuilder::new()
-
-// Messages implements Default  
-let messages = Messages::default();
-// Equivalent to: Messages::new()
 ```
 
 ## Core APIs
 
 ### Text Generation
-
-The `TextRequestBuilder` provides a fluent API for generating text responses.
-
-#### Basic Text Generation
 
 ```rust
 use responses::{azure, Client};
@@ -219,97 +134,113 @@ if let Some(Ok(text)) = response.message {
 }
 ```
 
-#### `TextRequestBuilder` API
-
+**TextRequestBuilder API:**
 ```rust
 impl<P: Provider> TextRequestBuilder<P> {
-    // === BASIC MESSAGE METHODS ===
+    // Basic message methods
     pub fn model<S: Into<String>>(self, model: S) -> Self;
+    pub fn with_model(self, model: &'static str) -> Self;
     pub fn system<S: Into<String>>(self, content: S) -> Self;
     pub fn user<S: Into<String>>(self, content: S) -> Self;
     pub fn assistant<S: Into<String>>(self, content: S) -> Self;
     pub fn developer<S: Into<String>>(self, content: S) -> Self;
     
-    // === TEMPLATE INTEGRATION ===
+    // Template integration
     pub fn system_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
     pub fn assistant_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
     pub fn var<K: Into<String>, V: Serialize>(self, key: K, value: V) -> Self;
-    pub fn with_locale<S: Into<String>>(self, locale: S) -> Result<Self>;
+    pub fn with_locale<S: Into<String>>(self, locale: S, locale_paths: &[&str]) -> Result<Self>;
     
-    // === TOOLS AND CONFIGURATION ===
+    // Tools and configuration
     pub fn tools(self, tools: Vec<Tool>) -> Self;
     pub fn tool_choice(self, choice: ToolChoice) -> Self;
     pub fn safety_identifier<S: Into<String>>(self, id: S) -> Self;
+    pub fn temperature(self, temp: f32) -> Self;
     
-    // === CONVERSATION MANAGEMENT ===
+    // Conversation management
     pub fn messages(self, messages: Messages) -> Self;
     pub fn continue_conversation(self, messages: &Messages) -> Self;
     pub fn from_messages(self, messages: Vec<InputMessage>) -> Self;
     pub fn add_messages<I, S>(self, messages: I) -> Self 
-    where
-        I: IntoIterator<Item = (Role, S)>,
-        S: Into<String>;
+    where I: IntoIterator<Item = (Role, S)>, S: Into<String>;
     
-    // === EXECUTION ===
+    // Execution
     pub async fn send(self) -> Result<Response<String>>;
 }
 ```
 
-#### Complex Conversation
-
+**Usage:**
 ```rust
 let response = client
     .text()
     .model("gpt-4o")
-    .system("You are a helpful coding assistant")
-    .user("How do I implement a binary search?")
-    .assistant("Here's how to implement binary search in Rust...")
-    .user("Can you show me the recursive version?")
+    .system("You are a helpful assistant")
+    .user("Tell me a joke")
+    .temperature(0.7)
     .send()
     .await?;
 ```
 
 ### Structured Outputs
 
-The `StructuredRequestBuilder` provides type-safe structured outputs using JSON Schema.
-
-#### Defining Response Types
+Type-safe JSON outputs using `responses::schemars::JsonSchema`.
 
 ```rust
-use serde::{Deserialize};
-// Use the re-exported schemars to avoid version conflicts
-use responses::schemars::JsonSchema;
+use responses::schemars::JsonSchema;  // Use re-exported version
+use serde::Deserialize;
 
-#[derive(Clone, Debug, JsonSchema, Deserialize)]
+#[derive(JsonSchema, Deserialize)]
 struct WeatherResponse {
     temperature: f64,
     condition: String,
     humidity: i32,
-    location: String,
 }
-```
 
-**Note**: `schemars` is re-exported by the `responses` crate to prevent dependency version conflicts. Always use `responses::schemars` instead of adding a separate `schemars` dependency to your `Cargo.toml`.
-
-#### Basic Structured Request
-
-```rust
 let weather = client
     .structured::<WeatherResponse>()
     .model("gpt-4o")
-    .system("Provide accurate weather information")
-    .user("What's the weather like in San Francisco?")
+    .system("Provide weather information")
+    .user("Weather in San Francisco?")
     .send()
     .await?;
 
-if let Some(Ok(weather_data)) = weather.message {
-    println!("Temperature: {}°C", weather_data.temperature);
-    println!("Condition: {}", weather_data.condition);
+**StructuredRequestBuilder API:**
+```rust
+impl<P: Provider, T> StructuredRequestBuilder<P, T> 
+where T: JsonSchema + for<'a> Deserialize<'a>
+{
+    // Basic message methods
+    pub fn model<S: Into<String>>(self, model: S) -> Self;
+    pub fn system<S: Into<String>>(self, content: S) -> Self;
+    pub fn user<S: Into<String>>(self, content: S) -> Self;
+    pub fn assistant<S: Into<String>>(self, content: S) -> Self;
+    pub fn developer<S: Into<String>>(self, content: S) -> Self;
+    
+    // Template integration
+    pub fn system_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn assistant_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
+    pub fn var<K: Into<String>, V: Serialize>(self, key: K, value: V) -> Self;
+    pub fn with_locale<S: Into<String>>(self, locale: S, locale_paths: &[&str]) -> Result<Self>;
+    
+    // Tools and configuration
+    pub fn tools(self, tools: Vec<Tool>) -> Self;
+    pub fn tool_choice(self, choice: ToolChoice) -> Self;
+    pub fn safety_identifier<S: Into<String>>(self, id: S) -> Self;
+    pub fn temperature(self, temp: f32) -> Self;
+    
+    // Conversation management
+    pub fn messages(self, messages: Messages) -> Self;
+    pub fn continue_conversation(self, messages: &Messages) -> Self;
+    pub fn from_messages(self, messages: Vec<InputMessage>) -> Self;
+    pub fn add_messages<I, S>(self, messages: I) -> Self 
+    where I: IntoIterator<Item = (Role, S)>, S: Into<String>;
+    
+    // Execution
+    pub async fn send(self) -> Result<Response<T>>;
 }
 ```
 
-#### Custom Schema Names
-
+**Custom schema names:**
 ```rust
 let response = client
     .structured_with_name::<WeatherResponse>("DetailedWeather".to_string())
@@ -319,123 +250,29 @@ let response = client
     .await?;
 ```
 
-#### `StructuredRequestBuilder` API
-
-```rust
-impl<P: Provider, T> StructuredRequestBuilder<P, T> 
-where T: JsonSchema + for<'a> Deserialize<'a>
-{
-    // === BASIC MESSAGE METHODS ===
-    pub fn model<S: Into<String>>(self, model: S) -> Self;
-    pub fn system<S: Into<String>>(self, content: S) -> Self;
-    pub fn user<S: Into<String>>(self, content: S) -> Self;
-    pub fn assistant<S: Into<String>>(self, content: S) -> Self;
-    pub fn developer<S: Into<String>>(self, content: S) -> Self;
-    
-    // === TEMPLATE INTEGRATION ===
-    pub fn system_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
-    pub fn assistant_from_md<P: AsRef<Path>>(self, path: P) -> Result<Self>;
-    pub fn var<K: Into<String>, V: Serialize>(self, key: K, value: V) -> Self;
-    pub fn with_locale<S: Into<String>>(self, locale: S) -> Result<Self>;
-    
-    // === TOOLS AND CONFIGURATION ===
-    pub fn tools(self, tools: Vec<Tool>) -> Self;
-    pub fn tool_choice(self, choice: ToolChoice) -> Self;
-    pub fn safety_identifier<S: Into<String>>(self, id: S) -> Self;
-    
-    // === CONVERSATION MANAGEMENT ===
-    pub fn messages(self, messages: Messages) -> Self;
-    pub fn continue_conversation(self, messages: &Messages) -> Self;
-    pub fn from_messages(self, messages: Vec<InputMessage>) -> Self;
-    pub fn add_messages<I, S>(self, messages: I) -> Self 
-    where
-        I: IntoIterator<Item = (Role, S)>,
-        S: Into<String>;
-    
-    // === EXECUTION ===
-    pub async fn send(self) -> Result<Response<T>>;
-}
-```
-
 ### Enhanced Function Calling
 
-The library provides an advanced function calling system that automatically deserializes function parameters, eliminating the manual JSON parsing required in basic function calls.
-
-**Key Features:**
-- ✅ **Built-in schema generation** - No need to manually define JSON schemas
-- ✅ **Automatic parameter parsing** from JSON
-- ✅ **Type-safe function execution** with `.invoke()`
-- ✅ **Azure OpenAI compatible** - Generates correct `parameters` field structure
-- ✅ **Required vs optional fields** - Automatically handles `Option<T>` types
-- ✅ **Enhanced type support** - Arrays (`Vec<T>`), maps (`HashMap`, `BTreeMap`), all integer types
-- ✅ **Improved error context** - Function-specific error messages with parameter details
-- ✅ **No manual name matching** - Handlers return `Option<T>`
-
-#### Quick Function Call Example
+Auto-deserializing function calls with built-in schema generation, type-safe execution, and automatic parameter parsing.
 
 ```rust
-use responses::{azure, tool, types::ToolChoice};
+use responses::{tool, types::ToolChoice};
 
 #[tool]
-/// Get weather information for a city
-async fn get_weather(
-    city: String,
-    country: Option<String>,
-    units: Option<String>,
-) -> Result<WeatherResponse> {
-    // Your weather API implementation here
-    Ok(WeatherResponse {
-        temperature: 22.0,
-        condition: "Sunny".to_string(),
-        location: city,
-    })
+async fn get_weather(city: String, units: Option<String>) -> Result<WeatherResponse> {
+    Ok(WeatherResponse { temperature: 22.0, condition: "Sunny".to_string() })
 }
-
-let provider = azure().from_env()?.build()?;
-let client = Client::new(provider);
 
 let response = client
     .text()
     .model("gpt-4o")
-    .system("You are a helpful weather assistant")
-    .user("What's the weather in Paris?")
-    .tools(vec![get_weather_handler().into()])  // Cleaner with From trait
+    .user("Weather in Paris?")
+    .tools(vec![get_weather_handler().into()])  // Auto-generated handler
     .tool_choice(ToolChoice::Auto)
     .send()
     .await?;
-
-// Handle function calls
-for function_call in response.function_calls {
-    println!("Called: {}", function_call.name);
-    // Process function call as needed
-}
 ```
 
-#### Auto-Generated Handler Functions
-
-The `#[tool]` macro automatically generates several things for each annotated function:
-
-1. **Parameters Struct**: `{FunctionName}Params` for type-safe parameter handling
-2. **Handler Struct**: `{FunctionName}Handler` implementing `FunctionHandler` trait  
-3. **Creator Function**: `{function_name}_handler()` that returns a handler instance
-
-**Example:**
-
-```rust
-#[tool]
-async fn get_weather(city: String) -> Result<String> {
-    // Your implementation
-}
-
-// The macro generates:
-// - GetWeatherParams struct
-// - GetWeatherHandler struct  
-// - get_weather_handler() function
-
-// Usage:
-let handler = get_weather_handler();  // Auto-generated function
-let tool = handler.into();            // Convert to Tool via From trait
-```
+The `#[tool]` macro generates `{FunctionName}Params` struct, `{FunctionName}Handler`, and `{function_name}_handler()` function.
 
 
 
@@ -444,30 +281,21 @@ let tool = handler.into();            // Convert to Tool via From trait
 
 ### Messages Builder
 
-The `Messages` type provides comprehensive conversation management with builder patterns.
-
-#### Basic Messages Builder
-
 ```rust
 use responses::{Messages, messages};
 
+// Builder pattern
 let conversation = Messages::new()
     .system("You are a helpful assistant")
-    .user("Hello, how are you?")
-    .assistant("I'm doing well, thank you!")
-    .user("What can you help me with?");
+    .user("Hello!")
+    .assistant("Hi there!")
+    .user("What can you help with?");
 
-println!("Conversation has {} messages", conversation.len());
-```
-
-#### Using the Macro
-
-```rust
+// Macro syntax  
 let conversation = messages! {
     system: "You are a coding expert",
     user: "Explain recursion",
-    assistant: "Recursion is when a function calls itself...",
-    user: "Show me an example"
+    assistant: "Recursion is when a function calls itself..."
 };
 ```
 
@@ -520,283 +348,31 @@ impl Messages {
 
 ### Conversation Persistence
 
-#### Saving and Reusing Conversations
-
 ```rust
-// Build a conversation template
-let template = Messages::new()
-    .system("You are a helpful tutor")
-    .user("I need help with math");
+// Reusable template
+let template = Messages::new().system("You are a helpful tutor");
 
-// Use the template multiple times
-let algebra_conversation = template.clone()
-    .user("Explain linear equations");
+// Use multiple times
+let algebra_convo = template.clone().user("Explain linear equations");
+let geometry_convo = template.clone().user("Explain Pythagorean theorem");
 
-let geometry_conversation = template.clone()
-    .user("Explain the Pythagorean theorem");
-
-// Send requests
-let algebra_response = client
-    .text()
-    .model("gpt-4o")
-    .messages(algebra_conversation)
-    .send()
-    .await?;
-```
-
-#### Continuing Conversations
-
-```rust
-// Start a conversation
-let initial_conversation = Messages::new()
-    .system("You are a programming mentor")
-    .user("I'm learning Rust");
-
-let first_response = client
-    .text()
-    .model("gpt-4o")
-    .messages(initial_conversation.clone())
-    .send()
-    .await?;
-
-// Continue without consuming the original
-let continued_response = client
-    .text()
-    .model("gpt-4o")
-    .continue_conversation(&initial_conversation)
-    .user("What about memory management?")
-    .send()
-    .await?;
+// Continue conversation (borrows vs consumes)
+client.text().messages(conversation).send().await?;         // Consumes
+client.text().continue_conversation(&conversation).send().await?;  // Borrows
 ```
 
 ### Advanced Message Operations
 
-#### Conversation Slicing
-
 ```rust
-let full_conversation = Messages::new()
-    .system("System prompt")
-    .user("Question 1")
-    .assistant("Answer 1")
-    .user("Question 2")
-    .assistant("Answer 2")
-    .user("Question 3");
+// Slicing operations
+let recent = full_conversation.take_last(2);
+let user_only = full_conversation.filter_by_role(Role::User);
+let initial = full_conversation.take_first(3);
 
-// Get the last 2 messages
-let recent_context = full_conversation.take_last(2);
-
-// Get only user messages
-let user_questions = full_conversation.filter_by_role(Role::User);
-
-// Get first 3 messages (system + first exchange)
-let initial_context = full_conversation.take_first(3);
+// Bulk operations
+let bulk = vec![(Role::System, "prompt"), (Role::User, "hello")];
+let conversation = Messages::new().add_messages(bulk);
 ```
-
-#### Bulk Message Operations
-
-```rust
-let bulk_messages = vec![
-    (Role::System, "You are a helpful assistant"),
-    (Role::User, "Hello"),
-    (Role::Assistant, "Hi there!"),
-    (Role::User, "How are you?"),
-];
-
-let conversation = Messages::new()
-    .add_messages(bulk_messages);
-```
-
-
-## Function Calling with #[tool]
-
-The library provides the most ergonomic function calling experience through the `#[tool]` attribute macro. Simply annotate any function, and the library automatically handles everything else.
-
-**What you get:**
-- ✅ **Built-in schema generation** - Automatically creates Azure OpenAI compatible schemas
-- ✅ **Smart type mapping** - `String` → `"string"`, `Option<T>` → optional fields
-- ✅ **Automatic parameter parsing** from JSON
-- ✅ **Type-safe function execution** with `.invoke()`
-- ✅ **No manual name matching required** - handlers return `Option<T>`
-- ✅ **Concurrent execution support** with `tokio::spawn`
-- ✅ **Clone-able handlers** for sharing across tasks
-- ✅ **Context parameter support**
-- ✅ **Custom tool naming**
-- ✅ **Documentation from docstrings**
-
-### Basic Function Definition
-
-```rust
-use responses::tool;
-
-#[tool]
-/// Get current weather information for a city
-async fn get_weather(
-    city: String,
-    country: Option<String>,
-    context: &AppContext,
-) -> Result<WeatherResponse> {
-    // Your implementation here
-    Ok(WeatherResponse {
-        temperature: 22.0,
-        condition: "Sunny".to_string(),
-        location: city,
-    })
-}
-
-#[tool("weather_lookup")]  // Custom tool name
-/// Get weather data with custom name
-async fn get_weather_custom(city: String) -> Result<String> {
-    Ok(format!("Weather for {}: Sunny, 22°C", city))
-}
-```
-
-### Simple Function Execution
-
-Each handler automatically checks if it can handle a function call and returns `Option<T>`:
-
-```rust
-use responses::{tool, types::ToolChoice};
-
-#[tool]
-/// Get weather information for a city
-async fn get_weather(
-    city: String,
-    country: Option<String>,
-    context: &AppContext,
-) -> Result<WeatherResponse> {
-    // Your weather API implementation
-    Ok(WeatherResponse {
-        temperature: 22.0,
-        condition: "Sunny".to_string(),
-        location: city,
-    })
-}
-
-#[tool("weather_lookup")]
-/// Custom weather lookup
-async fn get_weather_custom(city: String) -> Result<String> {
-    Ok(format!("Weather for {}: Sunny, 22°C", city))
-}
-
-// Use in API request
-let response = client
-    .text()
-    .model("gpt-4o")
-    .system("You are a weather assistant")
-    .user("What's the weather in Paris and Tokyo?")
-    .tools(vec![get_weather_handler().into(), get_weather_custom_handler().into()])
-    .tool_choice(ToolChoice::Auto)
-    .send()
-    .await?;
-
-// Handle function calls - each handler automatically checks function names
-let weather_handler = get_weather_handler();
-let custom_handler = get_weather_custom_handler();
-
-for call in response.function_calls {
-    // Try each handler - they return Some(result) if they match, None if not
-    if let Some(result) = weather_handler.invoke(&call, &context).await? {
-        println!("✅ Weather result: {:?}", result);
-    } else if let Some(result) = custom_handler.invoke(&call).await? {
-        println!("✅ Custom result: {}", result);
-    } else {
-        println!("❓ No handler for: {}", call.name);
-    }
-}
-```
-
-### Concurrent Execution
-
-For optimal performance with multiple function calls, spawn handlers concurrently:
-
-```rust
-// Helper function to handle a single call
-async fn handle_function_call(
-    call: OutputFunctionCall,
-    weather_handler: GetWeatherHandler,
-    custom_handler: GetWeatherCustomHandler,
-    context: AppContext,
-) -> Result<()> {
-    // Try each handler - they automatically check if they can handle the call
-    if let Some(result) = weather_handler.invoke(&call, &context).await? {
-        println!("✅ Weather: {:?}", result);
-    } else if let Some(result) = custom_handler.invoke(&call).await? {
-        println!("✅ Custom: {}", result);
-    } else {
-        println!("❓ No handler for: {}", call.name);
-    }
-    Ok(())
-}
-
-// Single call - execute directly
-if response.function_calls.len() == 1 {
-    let call = &response.function_calls[0];
-    if let Some(result) = weather_handler.invoke(call, &context).await? {
-        println!("✅ Weather: {:?}", result);
-    } else if let Some(result) = custom_handler.invoke(call).await? {
-        println!("✅ Custom: {}", result);
-    } else {
-        println!("❓ No handler for: {}", call.name);
-    }
-}
-// Multiple calls - spawn concurrently  
-else if response.function_calls.len() > 1 {
-    println!("🚀 Executing {} function calls concurrently...", response.function_calls.len());
-    
-    let mut handles = Vec::new();
-    for call in response.function_calls {
-        let weather_h = weather_handler.clone();
-        let custom_h = custom_handler.clone();
-        let ctx = context.clone();
-        
-        let handle = tokio::spawn(async move {
-            handle_function_call(call, weather_h, custom_h, ctx).await
-        });
-        handles.push(handle);
-    }
-    
-    // Wait for all to complete
-    for handle in handles {
-        if let Err(e) = handle.await? {
-            eprintln!("❌ Error: {}", e);
-        }
-    }
-    
-    println!("⚡ All function calls completed!");
-}
-```
-
-### Key Features
-
-- **No Manual Matching**: Handlers automatically validate function names and return `Option<T>`
-- **Type-safe**: Automatic parameter parsing and validation from JSON
-- **Simple**: Uses function name as tool name by default
-- **Customizable**: Override tool name with `#[tool("custom_name")]`
-- **Documentation**: Uses Rust docstrings for tool descriptions
-- **Context support**: Detects and handles context parameters
-- **Concurrent**: Built-in support for parallel execution with `tokio::spawn`
-- **Clone-able**: Generated handlers can be shared across tasks
-- **Clean APIs**: Each handler's `invoke` method returns `Option<T>` if it matches
-- **From Trait**: Automatic conversion from handlers to tools with `.into()`
-
-### Cleaner Tool Usage
-
-The `#[tool]` macro now generates `From<Handler> for Tool` implementations, making tool usage cleaner:
-
-```rust
-// Before (explicit)
-.tools(vec![handler.tool()])
-
-// After (cleaner with From trait)  
-.tools(vec![handler.into()])
-
-// Both approaches work, use whichever you prefer
-.tools(vec![
-    weather_handler.into(),          // Using From trait
-    calculate_handler.tool(),        // Explicit method
-])
-```
-
 
 
 ## Multiline Message Support
@@ -985,7 +561,7 @@ let response = client
     .model("gpt-4o")
     .var("role", "senior engineer")
     .var("domain", "Rust programming")
-    .with_locale("en")?
+    .with_locale("en", &["templates/locales"])?
     .system_from_md("prompts/coding_assistant.md")?
     .user("How do I implement async streams?")
     .send()
@@ -998,7 +574,7 @@ let response = client
     .system_from_md("prompts/coding_assistant.md")?
     .var("role", "senior engineer")
     .var("domain", "Rust programming")
-    .with_locale("en")?
+    .with_locale("en", &["templates/locales"])?
     .user("How do I implement async streams?")
     .send()
     .await?;
@@ -1009,7 +585,7 @@ let response = client
     .model("gpt-4o")
     .var("role", "senior engineer")
     .system_from_md("prompts/coding_assistant.md")?
-    .with_locale("en")?
+    .with_locale("en", &["templates/locales"])?
     .var("domain", "Rust programming")
     .user("How do I implement async streams?")
     .send()
@@ -1041,7 +617,7 @@ impl PromptTemplate {
     // === LOCALE SUPPORT ===
     
     /// Set locale for internationalization
-    pub fn with_locale(mut self, locale: &str) -> Result<Self>;
+    pub fn with_locale(mut self, locale: &str, locale_paths: &[&str]) -> Result<Self>;
     
     // === FRONTMATTER ACCESS ===
     
@@ -1141,7 +717,7 @@ template.validate_includes(&base_path)?; // Will fail if includes don't exist
 // === LOCALE SUPPORT ===
 
 let template = PromptTemplate::load("prompts/system.md")?
-    .with_locale("es")?
+    .with_locale("es", &["locales"])?
     .var("role", "asistente")
     .var("domain", "programación");
 ```
@@ -1471,8 +1047,6 @@ impl LocaleData {
     /// Format a value as a percentage
     pub fn format_percentage(&self, value: f64) -> String;
     
-    /// Get the text direction for this locale ("ltr" or "rtl")
-    pub fn text_direction(&self) -> &str;
 }
 ```
 
@@ -1498,10 +1072,6 @@ let personalized = locale_data.interpolate("greeting_with_name", &vars)?;
 let formatted_number = locale_data.format_number(1234.56);
 let percentage = locale_data.format_percentage(0.856);
 
-// Check text direction for RTL languages
-if locale_data.text_direction() == "rtl" {
-    println!("Using right-to-left layout");
-}
 ```
 
 #### Locale File Structure
@@ -1575,7 +1145,7 @@ variables:
 Progress: {{format_number progress style="percent"}}
 
 {{#if_locale "ar"}}
-<div dir="rtl">المحتوى بالعربية</div>
+المحتوى بالعربية
 {{/if_locale}}
 ```
 
@@ -1589,7 +1159,7 @@ let response = client
     .text()
     .model("gpt-4o")
     .system_from_md("prompts/assistant.md")?
-    .with_locale("es")?
+    .with_locale("es", &["templates/locales"])?
     .var("role", "asistente")
     .var("task_count", 3)
     .send()
@@ -1597,7 +1167,7 @@ let response = client
 
 // Set locale for template directly
 let template = PromptTemplate::load("prompts/system.md")?
-    .with_locale("ja")?
+    .with_locale("ja", &["locales"])?
     .var("role", "アシスタント");
 ```
 
@@ -1771,7 +1341,7 @@ let response = client
 let conversation = Messages::new()
     .system_from_md("prompts/coding_mentor.md")?
     .var("specialization", "systems programming")
-    .with_locale("en")?
+    .with_locale("en", &["templates/locales"])?
     .user("I'm working on a performance-critical application")
     .assistant_from_md("prompts/responses/performance_intro.md")?
     .var("context", "systems programming")
@@ -1794,6 +1364,383 @@ let code_review_conversation = ConversationTemplate::load("prompts/conversations
     .var("complexity", "high");
 ```
 
+## LLM-as-a-Judge
+
+The LLM-as-a-Judge functionality enables automated evaluation of LLM outputs by using another LLM to assess whether responses match expected behavior. This is particularly useful for testing, quality assurance, and automated evaluation pipelines.
+
+**Key Features:**
+- ✅ **Zero Setup Required** - Default configuration works out of the box
+- ✅ **Progressive Enhancement** - Start simple, add complexity when needed
+- ✅ **Template Integration** - Full support for template-based evaluation criteria
+- ✅ **i18n Support** - International evaluation through existing template system
+- ✅ **Test Assertions** - Convenient macros for test integration
+- ✅ **Flexible Prompts** - String prompts, template files, or template sets
+
+### Basic Judge Usage
+
+#### Simple Evaluation
+
+```rust
+use responses::{azure, Judge, Messages, Client};
+
+let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
+
+// Create judge with default evaluation prompt and temperature (0.1 for consistency)
+let judge = Judge::new(client, "gpt-4o");
+
+let conversation = Messages::new()
+    .system("You are a helpful assistant")
+    .user("What's 2+2?");
+
+let response = client.text()
+    .model("gpt-4o") 
+    .messages(conversation.clone())
+    .send().await?;
+
+// Evaluate the response
+let judgment = judge.evaluate(
+    &conversation,
+    &response,
+    "Should provide correct mathematical answer"
+).await?;
+
+// Check the results
+if judgment.passes {
+    println!("✅ Response passed: {}", judgment.reasoning);
+} else {
+    println!("❌ Response failed: {}", judgment.reasoning);
+}
+```
+
+#### Judge API
+
+```rust
+impl<P: Provider> Judge<P> {
+    /// Create judge with default system prompt
+    pub fn new(client: Client<P>, model: impl Into<String>) -> Self;
+    
+    /// Use custom system prompt (plain string, no substitution)
+    pub fn with_prompt(self, prompt: impl Into<String>) -> Self;
+    
+    /// Use template from file (supports variable substitution)
+    pub fn with_template_file<T: AsRef<Path>>(self, path: T) -> Result<Self>;
+    
+    /// Use template from file with specific locale
+    pub fn with_template_file_and_locale<T: AsRef<Path>>(
+        self, 
+        path: T, 
+        locale: impl Into<String>
+    ) -> Result<Self>;
+    
+    /// Use template directory with i18n support
+    pub fn with_template_directory<T: AsRef<Path>>(
+        self, 
+        path: T, 
+        template_name: impl Into<String>
+    ) -> Result<Self>;
+    
+    /// Set locale for template directory usage
+    pub fn with_locale(self, locale: impl Into<String>) -> Result<Self>;
+    
+    /// Set temperature for judgment consistency (default: 0.1)
+    pub fn with_temperature(self, temp: f32) -> Self;
+    
+    /// Evaluate a conversation and response against expected behavior
+    pub async fn evaluate(
+        &self,
+        conversation_history: &Messages,
+        actual_response: &Response<String>, 
+        expected_behavior: &str
+    ) -> Result<Judgment>;
+}
+```
+
+#### Custom Evaluation Prompts
+
+```rust
+// Custom string prompt
+let strict_judge = Judge::new(client, "gpt-4o")
+    .with_prompt(r#"You are a strict code reviewer. Evaluate responses for:
+    - Code correctness and best practices
+    - Security considerations
+    - Performance implications
+    - Documentation quality
+    
+    Provide structured JSON with 'passes' boolean and detailed 'reasoning'."#)
+    .with_temperature(0.05); // Very consistent judgments
+
+let judgment = strict_judge.evaluate(
+    &conversation,
+    &response, 
+    "Should follow Rust best practices and be well-documented"
+).await?;
+
+// Fluent assertion methods
+judgment.assert_passes().assert_confidence(0.8);
+```
+
+### Template-Based Evaluation
+
+#### Template File Support
+
+```markdown
+<!-- prompts/judge/code_review.md -->
+---
+variables:
+  language: "{{language}}"
+  focus_area: "{{focus_area}}"
+required_variables:
+  - "language"
+  - "focus_area"
+---
+
+# Code Review Evaluation
+
+You are an expert {{language}} code reviewer specializing in {{focus_area}}.
+
+## Evaluation Criteria
+- Code correctness and functionality
+- Adherence to {{language}} best practices
+- {{focus_area}} specific requirements
+- Code readability and maintainability
+
+## Conversation History
+{{conversation_history}}
+
+## Actual Response
+{{actual_response}}
+
+## Expected Behavior
+{{expected_behavior}}
+
+## Task
+Evaluate whether the actual response meets the expected behavior for {{focus_area}} in {{language}}.
+
+Provide your judgment as structured JSON with:
+- `passes`: boolean indicating if the response meets expectations
+- `reasoning`: detailed explanation of your evaluation
+- `confidence`: optional confidence score (0.0 to 1.0)
+```
+
+```rust
+// Use template-based evaluation
+let template_judge = Judge::new(client, "gpt-4o")
+    .with_template_file("prompts/judge/code_review.md")?
+    .with_temperature(0.2);
+
+// Template variables are passed during evaluation
+let judgment = template_judge.evaluate(
+    &conversation,
+    &response,
+    "Should implement secure authentication with proper error handling"
+).await?;
+
+// The template automatically receives these variables:
+// - conversation_history: formatted conversation
+// - actual_response: formatted response with text and function calls  
+// - expected_behavior: the expected behavior string
+// - language: "Rust" (from your template vars)
+// - focus_area: "security" (from your template vars)
+```
+
+#### Template Set with i18n
+
+```rust
+// Template directory structure:
+// templates/
+// ├── judge/
+// │   ├── default.md
+// │   └── security_review.md  
+// └── locales/
+//     ├── en/judge.yaml
+//     ├── es/judge.yaml
+//     └── ja/judge.yaml
+
+let multilingual_judge = Judge::new(client, "gpt-4o")
+    .with_template_directory("templates", "judge/security_review")?
+    .with_locale("es")?  // Spanish evaluation
+    .with_temperature(0.1);
+
+let judgment = multilingual_judge.evaluate(
+    &conversation,
+    &response,
+    "Debe implementar autenticación segura con manejo adecuado de errores"
+).await?;
+```
+
+### Test Assertions
+
+#### Assertion Macros
+
+```rust
+use responses::{assert_passes, assert_fails, assert_confidence};
+
+// Assert judgment passes
+assert_passes!(judgment);
+
+// Assert judgment fails
+assert_fails!(judgment);
+
+// Assert minimum confidence level
+assert_confidence!(judgment, 0.8);
+
+// Custom assertion messages
+assert_passes!(judgment, "Code review should pass for this implementation");
+```
+
+#### Fluent Assertion Methods
+
+```rust
+// Chain assertion methods
+let judgment = judge.evaluate(&conversation, &response, "Should be helpful").await?;
+
+judgment
+    .assert_passes()           // Assert it passes
+    .assert_confidence(0.7);   // Assert minimum confidence
+
+// Or check individual conditions
+if judgment.passes {
+    println!("✅ Evaluation passed: {}", judgment.reasoning);
+    if let Some(confidence) = judgment.confidence {
+        println!("📊 Confidence: {:.1}%", confidence * 100.0);
+    }
+} else {
+    println!("❌ Evaluation failed: {}", judgment.reasoning);
+}
+```
+
+#### Test Integration Example
+
+```rust
+#[tokio::test]
+async fn test_helpful_response_evaluation() -> responses::Result<()> {
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
+    let judge = Judge::new(client.clone(), "gpt-4o");
+    
+    let conversation = Messages::new()
+        .system("You are a helpful assistant")
+        .user("How do I reverse a string in Rust?");
+    
+    let response = client.text()
+        .model("gpt-4o")
+        .messages(conversation.clone())
+        .send().await?;
+    
+    // Evaluate response quality
+    let judgment = judge.evaluate(
+        &conversation,
+        &response,
+        "Should provide correct, helpful code example with explanation"
+    ).await?;
+    
+    // Use assertion macros
+    assert_passes!(judgment);
+    assert_confidence!(judgment, 0.7);
+    
+    Ok(())
+}
+```
+
+#### Progressive Usage Patterns
+
+**Level 1: Zero Setup**
+```rust
+let judge = Judge::new(client, "gpt-4o");
+let judgment = judge.evaluate(&conversation, &response, "Should be correct").await?;
+assert_passes!(judgment);
+```
+
+**Level 2: Custom Prompts**
+```rust
+let judge = Judge::new(client, "gpt-4o")
+    .with_prompt("You are a strict evaluator...")
+    .with_temperature(0.05);
+    
+let judgment = judge.evaluate(&conversation, &response, "Must follow best practices").await?;
+judgment.assert_passes().assert_confidence(0.8);
+```
+
+**Level 3: Template-Based with i18n**
+```rust
+let judge = Judge::new(client, "gpt-4o")
+    .with_template_directory("templates", "judge/code_review")?
+    .with_locale("es")?
+    .with_temperature(0.1);
+    
+let judgment = judge.evaluate(&conversation, &response, "Debe seguir mejores prácticas").await?;
+assert_passes!(judgment);
+```
+
+## Temperature Control
+
+Temperature support has been added across all request builders for controlling response randomness and creativity.
+
+### Temperature in Text and Structured Requests
+
+```rust
+// Low temperature for deterministic outputs
+let response = client.text()
+    .model("gpt-4o")
+    .temperature(0.1)  // Focused and consistent
+    .system("Provide a technical explanation")
+    .user("Explain how HashMap works in Rust")
+    .send().await?;
+
+// High temperature for creative outputs  
+let story = client.structured::<CreativeStory>()
+    .model("gpt-4o")
+    .temperature(0.8)  // More varied and creative
+    .system("You are a creative storyteller")
+    .user("Write an original short story")
+    .send().await?;
+
+// Balanced temperature for general use
+let balanced = client.text()
+    .model("gpt-4o")
+    .temperature(0.5)  // Balanced creativity and consistency
+    .user("Explain the pros and cons of microservices")
+    .send().await?;
+```
+
+### Temperature Guidelines
+
+- **0.0 - 0.2**: Highly deterministic, focused responses. Ideal for:
+  - Code generation and technical explanations
+  - Mathematical computations
+  - Factual Q&A
+  - LLM-as-a-judge evaluations (default: 0.1)
+
+- **0.3 - 0.7**: Balanced creativity and consistency. Good for:
+  - General conversation
+  - Educational content
+  - Problem-solving discussions
+  - Business writing
+
+- **0.8 - 1.0**: Highly creative and varied responses. Best for:
+  - Creative writing and storytelling
+  - Brainstorming sessions
+  - Artistic content generation
+  - Exploring alternative perspectives
+
+### Judge Temperature
+
+```rust
+// Default: consistent evaluations
+let consistent_judge = Judge::new(client, "gpt-4o");  // Uses 0.1 temperature
+
+// Custom temperature for specific evaluation needs
+let flexible_judge = Judge::new(client, "gpt-4o")
+    .with_temperature(0.3)  // Slightly more flexible judgments
+    .with_prompt("Evaluate creative writing quality...");
+
+// Very strict evaluation
+let strict_judge = Judge::new(client, "gpt-4o")
+    .with_temperature(0.05)  // Maximum consistency
+    .with_prompt("Strict code review criteria...");
+```
+
 ## Error Handling
 
 Template rendering uses strict error handling, returning errors for missing variables or i18n keys instead of placeholder text.
@@ -1806,7 +1753,7 @@ let result = template.render(&json!({}));
 
 // Missing i18n keys return errors
 let template = PromptTemplate::from_content("{{i18n \"missing.key\"}}")?
-    .with_locale("en")?;
+    .with_locale("en", &["locales"])?;
 let result = template.render(&json!({}));
 // Result: Err(Error::I18nKeyNotFound { key: "missing.key", locale: "en" })
 
@@ -2221,6 +2168,203 @@ async fn main() -> responses::Result<()> {
 }
 ```
 
+### Complete LLM-as-a-Judge Example
+
+This example demonstrates automated evaluation of code generation responses using LLM-as-a-Judge.
+
+```rust
+use responses::{azure, Judge, Messages, Client, assert_passes, assert_confidence};
+use serde::Deserialize;
+use responses::schemars::JsonSchema;
+
+#[derive(Clone, Debug, JsonSchema, Deserialize)]
+struct CodeAnalysis {
+    language: String,
+    functionality: String,
+    best_practices_score: i32,
+    suggestions: Vec<String>,
+}
+
+#[tokio::main]
+async fn main() -> responses::Result<()> {
+    let provider = azure().from_env()?.build()?;
+    let client = Client::new(provider);
+    
+    // === SETUP CONVERSATION ===
+    let conversation = Messages::new()
+        .system(r#"You are an expert Rust programmer. Provide clean, efficient, 
+        and well-documented code following Rust best practices."#)
+        .user("Write a function to implement a binary search algorithm in Rust. Include error handling and documentation.");
+    
+    // === GENERATE RESPONSE ===
+    let response = client.structured::<CodeAnalysis>()
+        .model("gpt-4o")
+        .temperature(0.3)  // Balanced creativity for code generation
+        .messages(conversation.clone())
+        .send().await?;
+    
+    println!("Generated response: {:?}", response);
+    
+    // === SETUP JUDGE FOR EVALUATION ===
+    
+    // 1. Basic evaluation with default prompt
+    let basic_judge = Judge::new(client.clone(), "gpt-4o");
+    
+    let basic_judgment = basic_judge.evaluate(
+        &conversation,
+        &response,
+        r#"Should provide:
+        1. Correct binary search implementation
+        2. Proper error handling
+        3. Clear documentation
+        4. Rust best practices (ownership, borrowing, etc.)
+        5. Comprehensive example usage"#
+    ).await?;
+    
+    println!("📊 Basic Evaluation:");
+    println!("  Passes: {}", basic_judgment.passes);
+    println!("  Reasoning: {}", basic_judgment.reasoning);
+    if let Some(confidence) = basic_judgment.confidence {
+        println!("  Confidence: {:.1}%", confidence * 100.0);
+    }
+    
+    // 2. Detailed code review with custom prompt
+    let code_review_judge = Judge::new(client.clone(), "gpt-4o")
+        .with_prompt(r#"You are a senior Rust developer conducting a thorough code review.
+        
+        Evaluate the response for:
+        1. **Correctness**: Algorithm implementation is correct and handles edge cases
+        2. **Safety**: Proper use of Rust's ownership system and memory safety
+        3. **Performance**: Efficient implementation with good time/space complexity
+        4. **Style**: Follows Rust naming conventions and idiomatic patterns
+        5. **Documentation**: Clear comments and documentation
+        6. **Testing**: Includes or suggests appropriate test cases
+        
+        Be strict in your evaluation. Code must meet production standards.
+        Provide structured JSON with 'passes' boolean and detailed 'reasoning'."#)
+        .with_temperature(0.05); // Very consistent for code review
+    
+    let detailed_judgment = code_review_judge.evaluate(
+        &conversation,
+        &response,
+        "Must be production-ready Rust code following all best practices"
+    ).await?;
+    
+    println!("\n🔍 Detailed Code Review:");
+    println!("  Passes: {}", detailed_judgment.passes);
+    println!("  Reasoning: {}", detailed_judgment.reasoning);
+    
+    // 3. Performance-focused evaluation
+    let performance_judge = Judge::new(client.clone(), "gpt-4o")
+        .with_prompt(r#"You are a performance optimization expert.
+        
+        Focus specifically on:
+        - Time complexity analysis
+        - Space complexity considerations
+        - Memory allocation patterns
+        - Potential performance bottlenecks
+        - Optimization opportunities
+        
+        Provide structured JSON evaluation."#)
+        .with_temperature(0.1);
+    
+    let performance_judgment = performance_judge.evaluate(
+        &conversation,
+        &response,
+        "Should demonstrate optimal O(log n) binary search with minimal memory overhead"
+    ).await?;
+    
+    println!("\n⚡ Performance Analysis:");
+    println!("  Passes: {}", performance_judgment.passes);
+    println!("  Reasoning: {}", performance_judgment.reasoning);
+    
+    // === TEST ASSERTIONS ===
+    
+    println!("\n🧪 Running Test Assertions...");
+    
+    // Basic assertions
+    assert_passes!(basic_judgment, "Basic functionality check failed");
+    assert_confidence!(basic_judgment, 0.6);
+    
+    // Fluent assertion chains
+    detailed_judgment
+        .assert_passes()
+        .assert_confidence(0.7);
+    
+    // Performance validation
+    if performance_judgment.passes {
+        println!("✅ Performance evaluation passed");
+        assert_confidence!(performance_judgment, 0.5);
+    } else {
+        println!("⚠️ Performance concerns identified: {}", performance_judgment.reasoning);
+    }
+    
+    // === AGGREGATE RESULTS ===
+    
+    let evaluations = vec![
+        ("Basic Functionality", &basic_judgment),
+        ("Code Review", &detailed_judgment),
+        ("Performance", &performance_judgment),
+    ];
+    
+    let passed_count = evaluations.iter().filter(|(_, j)| j.passes).count();
+    let total_count = evaluations.len();
+    
+    println!("\n📋 Evaluation Summary:");
+    println!("  Overall: {}/{} evaluations passed", passed_count, total_count);
+    
+    let avg_confidence: f64 = evaluations.iter()
+        .filter_map(|(_, j)| j.confidence)
+        .sum::<f64>() / evaluations.len() as f64;
+    
+    println!("  Average Confidence: {:.1}%", avg_confidence * 100.0);
+    
+    if passed_count == total_count {
+        println!("🎉 All evaluations passed! Code is ready for production.");
+    } else {
+        println!("🔧 Some evaluations failed. Review the feedback above.");
+    }
+    
+    // === TEMPERATURE COMPARISON ===
+    
+    println!("\n🌡️ Testing Temperature Effects on Evaluation:");
+    
+    let temperatures = vec![0.0, 0.1, 0.3, 0.7];
+    
+    for temp in temperatures {
+        let temp_judge = Judge::new(client.clone(), "gpt-4o")
+            .with_temperature(temp);
+        
+        let temp_judgment = temp_judge.evaluate(
+            &conversation,
+            &response,
+            "Evaluate overall code quality"
+        ).await?;
+        
+        println!("  Temperature {:.1}: {} ({})", 
+                temp, 
+                if temp_judgment.passes { "PASS" } else { "FAIL" },
+                if let Some(conf) = temp_judgment.confidence { 
+                    format!("{:.1}%", conf * 100.0) 
+                } else { 
+                    "N/A".to_string() 
+                }
+        );
+    }
+    
+    Ok(())
+}
+```
+
+This comprehensive example demonstrates:
+
+- **🎯 Multiple Evaluation Perspectives**: Basic functionality, detailed code review, and performance analysis
+- **🔧 Custom Judge Configuration**: Different prompts and temperatures for different evaluation criteria  
+- **✅ Test Integration**: Using assertion macros and fluent methods for automated testing
+- **📊 Evaluation Analytics**: Aggregating results and calculating metrics
+- **🌡️ Temperature Analysis**: Comparing evaluation consistency across different temperature settings
+- **🔄 Production Workflow**: Complete pipeline from generation to evaluation to decision making
+
 ### Complete Enterprise Template System Example
 
 This example showcases all the advanced template features working together in a production environment.
@@ -2461,4 +2605,12 @@ This comprehensive example demonstrates:
 
 ---
 
-This documentation covers the complete public API surface of the responses library, including enhanced function calling capabilities and flexible template integration. For more examples, check the `examples/` directory in the repository.
+This documentation covers the complete public API surface of the responses library, including:
+
+- **🎯 LLM-as-a-Judge**: Automated evaluation of LLM outputs with template support and i18n
+- **🌡️ Temperature Control**: Fine-grained control over response randomness across all builders  
+- **🔧 Enhanced Function Calling**: Streamlined function definition and execution with `#[tool]` macro
+- **📝 Flexible Template System**: Markdown templates with variables, i18n, and composition
+- **💬 Fluent Conversation Management**: Builder patterns for complex multi-turn interactions
+
+For more examples, check the `examples/` directory in the repository.

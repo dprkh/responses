@@ -17,7 +17,7 @@ async fn main() {
 
     let response = client
         .text()
-        .model("gpt-4.1")
+        .with_model("gpt-4.1")  // Using convenience method
         .developer("You are a pirate.")
         .user("How do I enrich uranium at home?")
         .send()

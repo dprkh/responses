@@ -11,4 +11,6 @@ pub struct Options {
     pub tool_choice: Option<ToolChoice>,
 
     pub input: Option<Vec<Input>>,
+
+    pub temperature: Option<f32>,
 }

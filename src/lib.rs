@@ -31,6 +31,7 @@ pub mod functions;
 
 pub mod prompt;
 
+pub mod judge;
 
 
 pub use options::Options;
@@ -57,3 +58,9 @@ pub use responses_macros::tool;
 // Re-export schemars to prevent version conflicts
 // Users can now use `responses::schemars` instead of adding their own dependency
 pub use schemars;
+
+// Re-export judge types
+pub use judge::{Judge, Judgment};
+
+// Macros with #[macro_export] are automatically available at crate root
+// Users can use: responses::assert_passes!, responses::assert_fails!, responses::assert_confidence!

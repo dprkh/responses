@@ -20,15 +20,6 @@ pub struct LocaleManager {
 pub struct LocaleData {
     locale: String,
     strings: HashMap<String, serde_yaml::Value>,
-    text_direction: TextDirection,
-}
-
-
-/// Text direction for RTL language support.
-#[derive(Debug, Clone)]
-pub enum TextDirection {
-    LeftToRight,
-    RightToLeft,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,12 +153,9 @@ impl LocaleManager {
             }
         }
 
-        let text_direction = Self::get_text_direction(locale, &all_strings);
-
         Ok(LocaleData {
             locale: locale.to_string(),
             strings: all_strings,
-            text_direction,
         })
     }
 
@@ -176,23 +164,6 @@ impl LocaleManager {
     }
 
 
-    fn get_text_direction(locale: &str, strings: &HashMap<String, serde_yaml::Value>) -> TextDirection {
-        // Check if text direction is explicitly set in locale data
-        if let Some(direction) = strings.get("text_direction") {
-            if let Some(dir_str) = direction.as_str() {
-                if dir_str == "rtl" {
-                    return TextDirection::RightToLeft;
-                }
-            }
-        }
-
-        // Default based on language
-        let language = locale.split('-').next().unwrap_or(locale);
-        match language {
-            "ar" | "he" | "fa" | "ur" => TextDirection::RightToLeft,
-            _ => TextDirection::LeftToRight,
-        }
-    }
 }
 
 impl LocaleData {
@@ -268,13 +239,6 @@ impl LocaleData {
         format!("{}%", trimmed)
     }
 
-    /// Get text direction for this locale.
-    pub fn text_direction(&self) -> &str {
-        match self.text_direction {
-            TextDirection::LeftToRight => "ltr",
-            TextDirection::RightToLeft => "rtl",
-        }
-    }
 
     /// Get all available translation keys for enhanced error reporting.
     pub fn get_available_keys(&self) -> Vec<String> {

@@ -107,6 +107,17 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
         self
     }
     
+    /// Set the temperature for controlling randomness in response generation.
+    /// 
+    /// Temperature controls the randomness of the model's outputs:
+    /// - Lower values (e.g., 0.1) make outputs more focused and deterministic
+    /// - Higher values (e.g., 0.9) make outputs more creative and varied
+    /// - Typically ranges from 0.0 to 1.0
+    pub fn temperature(mut self, temp: f32) -> Self {
+        self.options.temperature = Some(temp);
+        self
+    }
+    
     /// Use the provided messages as the conversation history.
     /// This replaces any existing messages.
     pub fn messages(mut self, messages: Messages) -> Self {
@@ -353,6 +364,17 @@ where
     
     pub fn safety_identifier<S: Into<String>>(mut self, id: S) -> Self {
         self.options.safety_identifier = Some(id.into());
+        self
+    }
+    
+    /// Set the temperature for controlling randomness in response generation.
+    /// 
+    /// Temperature controls the randomness of the model's outputs:
+    /// - Lower values (e.g., 0.1) make outputs more focused and deterministic
+    /// - Higher values (e.g., 0.9) make outputs more creative and varied
+    /// - Typically ranges from 0.0 to 1.0
+    pub fn temperature(mut self, temp: f32) -> Self {
+        self.options.temperature = Some(temp);
         self
     }
     

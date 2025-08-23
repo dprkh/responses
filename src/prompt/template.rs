@@ -2116,7 +2116,7 @@ Main content here.
         let result_en = template_en.render(&json!({})).unwrap();
         assert!(result_en.contains("System Instructions"));
 
-        // Test Arabic locale which has text_direction: "rtl"
+        // Test Arabic locale
         let template_ar = PromptTemplate::from_content(content).unwrap()
             .with_locale("ar", TEST_LOCALE_PATHS).unwrap();
         let result_ar = template_ar.render(&json!({})).unwrap();
@@ -2128,11 +2128,11 @@ Main content here.
         let content = r#"Welcome message.
 
 {{#if_locale "ar"}}
-<div dir="rtl">المحتوى بالعربية</div>
+المحتوى بالعربية
 {{/if_locale}}
 
 {{#if_locale "en"}}
-<div dir="ltr">English content</div>
+English content
 {{/if_locale}}"#;
 
         let template = PromptTemplate::from_content(content).unwrap();
