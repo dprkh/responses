@@ -17,17 +17,6 @@ use serde::Deserialize;
 use schemars::JsonSchema;
 use std::path::{Path, PathBuf};
 
-/// Default system prompt for LLM-as-a-judge evaluation
-pub const DEFAULT_JUDGE_PROMPT: &str = r#"You are an expert LLM evaluator. Your task is to judge whether an LLM's response matches the expected behavior.
-
-Consider these factors:
-1. Content accuracy and correctness
-2. Format compliance and structure
-3. Function calling correctness (if applicable)
-4. Completeness and thoroughness
-5. Appropriateness for the context
-
-Always provide your judgment as structured JSON with a boolean 'passes' field and detailed 'reasoning' string."#;
 
 /// Result of an LLM-as-a-judge evaluation
 #[derive(Clone, Debug, JsonSchema, Deserialize)]
@@ -80,17 +69,22 @@ pub enum JudgePrompt {
 pub struct Judge<P: Provider> {
     client: Client<P>,
     model: String,
-    prompt: JudgePrompt,
+    prompt: Option<JudgePrompt>,
     temperature: Option<f32>,
 }
 
 impl<P: Provider> Judge<P> {
-    /// Create judge with default system prompt
+    /// Create a new judge instance
+    /// 
+    /// Note: You must configure a prompt using one of the `with_*` methods before evaluation:
+    /// - `.with_prompt(prompt)` for string prompts
+    /// - `.with_template_file(path)` for template files  
+    /// - `.with_template_directory(path, name)` for template sets
     pub fn new(client: Client<P>, model: impl Into<String>) -> Self {
         Self {
             client,
             model: model.into(),
-            prompt: JudgePrompt::String(DEFAULT_JUDGE_PROMPT.to_string()),
+            prompt: None, // Must be configured before use
             temperature: Some(0.1), // Low temp for consistent judgments
         }
     }
@@ -98,7 +92,7 @@ impl<P: Provider> Judge<P> {
     /// Use custom system prompt (plain string, no substitution)
     pub fn with_prompt(self, prompt: impl Into<String>) -> Self {
         Self {
-            prompt: JudgePrompt::String(prompt.into()),
+            prompt: Some(JudgePrompt::String(prompt.into())),
             ..self
         }
     }
@@ -106,10 +100,10 @@ impl<P: Provider> Judge<P> {
     /// Use template from file (supports variable substitution)
     pub fn with_template_file<T: AsRef<Path>>(self, path: T) -> Result<Self> {
         Ok(Self {
-            prompt: JudgePrompt::TemplateFile { 
+            prompt: Some(JudgePrompt::TemplateFile { 
                 path: path.as_ref().to_path_buf(), 
                 locale: None 
-            },
+            }),
             ..self
         })
     }
@@ -121,10 +115,10 @@ impl<P: Provider> Judge<P> {
         locale: impl Into<String>
     ) -> Result<Self> {
         Ok(Self {
-            prompt: JudgePrompt::TemplateFile { 
+            prompt: Some(JudgePrompt::TemplateFile { 
                 path: path.as_ref().to_path_buf(), 
                 locale: Some(locale.into()) 
-            },
+            }),
             ..self
         })
     }
@@ -137,11 +131,11 @@ impl<P: Provider> Judge<P> {
     ) -> Result<Self> {
         let template_set = TemplateSet::from_dir(path)?;
         Ok(Self {
-            prompt: JudgePrompt::TemplateSet {
+            prompt: Some(JudgePrompt::TemplateSet {
                 template_set,
                 template_name: template_name.into(),
                 locale: "en".to_string(), // Default locale
-            },
+            }),
             ..self
         })
     }
@@ -149,16 +143,19 @@ impl<P: Provider> Judge<P> {
     /// Set locale for template directory usage
     pub fn with_locale(mut self, locale: impl Into<String>) -> Result<Self> {
         match &mut self.prompt {
-            JudgePrompt::TemplateSet { locale: current_locale, .. } => {
+            Some(JudgePrompt::TemplateSet { locale: current_locale, .. }) => {
                 let new_locale = locale.into();
                 *current_locale = new_locale.clone();
                 // Note: TemplateSet locale changes are applied at render time
             }
-            JudgePrompt::TemplateFile { locale: file_locale, .. } => {
+            Some(JudgePrompt::TemplateFile { locale: file_locale, .. }) => {
                 *file_locale = Some(locale.into());
             }
-            JudgePrompt::String(_) => {
+            Some(JudgePrompt::String(_)) => {
                 return Err(Error::Config("Cannot set locale for string prompts".to_string()));
+            }
+            None => {
+                return Err(Error::Config("No prompt configured. Call with_template_file() or with_template_directory() first".to_string()));
             }
         }
         Ok(self)
@@ -182,6 +179,12 @@ impl<P: Provider> Judge<P> {
         actual_response: &Response<String>, 
         expected_behavior: &str
     ) -> Result<Judgment> {
+        if self.prompt.is_none() {
+            return Err(Error::Config(
+                "No prompt configured. Use with_prompt(), with_template_file(), or with_template_directory() before evaluating".to_string()
+            ));
+        }
+        
         let evaluation_messages = self.build_evaluation_messages(
             conversation_history, 
             actual_response, 
@@ -213,7 +216,7 @@ impl<P: Provider> Judge<P> {
         let formatted_response = self.format_response(actual_response);
         let formatted_conversation = self.format_conversation(conversation_history);
         
-        match &self.prompt {
+        match self.prompt.as_ref().unwrap() { // Safe because we checked in evaluate()
             JudgePrompt::String(system_prompt) => {
                 Ok(Messages::new()
                     .system(system_prompt)

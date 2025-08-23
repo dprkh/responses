@@ -1386,8 +1386,19 @@ use responses::{azure, Judge, Messages, Client};
 let provider = azure().from_env()?.build()?;
 let client = Client::new(provider);
 
-// Create judge with default evaluation prompt and temperature (0.1 for consistency)
-let judge = Judge::new(client, "gpt-4o");
+// Create judge and configure with custom evaluation prompt (users should tailor for their use-case)
+let judge = Judge::new(client, "gpt-4o")
+    .with_prompt(r#"You are a software developer reviewing code and responses. 
+Your task is to evaluate whether an LLM's response matches the expected behavior from a developer's perspective.
+
+Consider these factors:
+1. Code accuracy and best practices
+2. Implementation correctness  
+3. Function calling and API usage
+4. Technical completeness and quality
+5. Appropriateness for development context
+
+Always provide your evaluation as structured JSON with a boolean 'passes' field and detailed 'reasoning' string."#);
 
 let conversation = Messages::new()
     .system("You are a helpful assistant")
@@ -1417,7 +1428,12 @@ if judgment.passes {
 
 ```rust
 impl<P: Provider> Judge<P> {
-    /// Create judge with default system prompt
+    /// Create a new judge instance
+    /// 
+    /// Note: You must configure a prompt using one of the `with_*` methods before evaluation:
+    /// - `.with_prompt(prompt)` for string prompts
+    /// - `.with_template_file(path)` for template files  
+    /// - `.with_template_directory(path, name)` for template sets
     pub fn new(client: Client<P>, model: impl Into<String>) -> Self;
     
     /// Use custom system prompt (plain string, no substitution)
@@ -1617,7 +1633,8 @@ if judgment.passes {
 async fn test_helpful_response_evaluation() -> responses::Result<()> {
     let provider = azure().from_env()?.build()?;
     let client = Client::new(provider);
-    let judge = Judge::new(client.clone(), "gpt-4o");
+    let judge = Judge::new(client.clone(), "gpt-4o")
+        .with_prompt("You are an expert evaluator. Judge whether responses are helpful and correct.");
     
     let conversation = Messages::new()
         .system("You are a helpful assistant")
@@ -1645,9 +1662,10 @@ async fn test_helpful_response_evaluation() -> responses::Result<()> {
 
 #### Progressive Usage Patterns
 
-**Level 1: Zero Setup**
+**Level 1: Simple String Prompts**
 ```rust
-let judge = Judge::new(client, "gpt-4o");
+let judge = Judge::new(client, "gpt-4o")
+    .with_prompt("You are a helpful evaluator. Judge whether responses are correct and helpful.");
 let judgment = judge.evaluate(&conversation, &response, "Should be correct").await?;
 assert_passes!(judgment);
 ```
@@ -1728,17 +1746,18 @@ let balanced = client.text()
 
 ```rust
 // Default: consistent evaluations
-let consistent_judge = Judge::new(client, "gpt-4o");  // Uses 0.1 temperature
+let consistent_judge = Judge::new(client, "gpt-4o")  // Uses 0.1 temperature by default
+    .with_prompt("You are an expert evaluator...");
 
 // Custom temperature for specific evaluation needs
 let flexible_judge = Judge::new(client, "gpt-4o")
-    .with_temperature(0.3)  // Slightly more flexible judgments
-    .with_prompt("Evaluate creative writing quality...");
+    .with_prompt("Evaluate creative writing quality...")
+    .with_temperature(0.3);  // Slightly more flexible judgments
 
 // Very strict evaluation
 let strict_judge = Judge::new(client, "gpt-4o")
-    .with_temperature(0.05)  // Maximum consistency
-    .with_prompt("Strict code review criteria...");
+    .with_prompt("Strict code review criteria...")
+    .with_temperature(0.05);  // Maximum consistency
 ```
 
 ## Error Handling
@@ -2207,8 +2226,9 @@ async fn main() -> responses::Result<()> {
     
     // === SETUP JUDGE FOR EVALUATION ===
     
-    // 1. Basic evaluation with default prompt
-    let basic_judge = Judge::new(client.clone(), "gpt-4o");
+    // 1. Basic evaluation with simple prompt
+    let basic_judge = Judge::new(client.clone(), "gpt-4o")
+        .with_prompt("You are an expert evaluator. Judge whether responses meet expectations.");
     
     let basic_judgment = basic_judge.evaluate(
         &conversation,
@@ -2333,6 +2353,7 @@ async fn main() -> responses::Result<()> {
     
     for temp in temperatures {
         let temp_judge = Judge::new(client.clone(), "gpt-4o")
+            .with_prompt("You are an expert evaluator. Judge overall code quality.")
             .with_temperature(temp);
         
         let temp_judgment = temp_judge.evaluate(
