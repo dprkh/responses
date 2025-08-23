@@ -53,3 +53,7 @@ pub use messages::{Messages, messages};
 
 // Re-export the macro
 pub use responses_macros::tool;
+
+// Re-export schemars to prevent version conflicts
+// Users can now use `responses::schemars` instead of adding their own dependency
+pub use schemars;

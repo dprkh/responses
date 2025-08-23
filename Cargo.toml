@@ -29,4 +29,5 @@ url = "2.5"
 [dev-dependencies]
 chrono = "0.4"
 dotenv = "0.15"
+tempfile = "3.8"
 tokio = { version = "1.47", features = ["rt", "macros"] }

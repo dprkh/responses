@@ -10,6 +10,14 @@ use crate::error::{Error, Result};
 use crate::prompt::i18n::LocaleManager;
 use crate::messages::Messages;
 
+fn get_locales_paths(fallback_paths: &[&str]) -> Vec<String> {
+    if let Ok(custom_path) = std::env::var("RESPONSES_LOCALES_PATH") {
+        vec![custom_path]
+    } else {
+        fallback_paths.iter().map(|s| s.to_string()).collect()
+    }
+}
+
 /// Template Abstract Syntax Tree node types
 #[derive(Debug, Clone, PartialEq)]
 pub enum TemplateNode {
@@ -695,10 +703,12 @@ impl TemplateExecutor {
                         }
                     }
                 } else {
-                    // Key not found, return error
+                    // Key not found, return error with enhanced context
                     Err(Error::I18nKeyNotFound { 
                         key: key.to_string(), 
-                        locale: self.current_locale.clone() 
+                        locale: self.current_locale.clone(),
+                        template_file: None, // Could be enhanced to track template file
+                        available_keys: None, // Could be enhanced to list available keys
                     })
                 }
             }
@@ -711,7 +721,9 @@ impl TemplateExecutor {
             // No locale manager - return error for i18n keys when no locale is configured
             Err(Error::I18nKeyNotFound { 
                 key: key.to_string(), 
-                locale: self.current_locale.clone() 
+                locale: self.current_locale.clone(),
+                template_file: None,
+                available_keys: Some(vec!["No locale configured".to_string()]),
             })
         }
     }
@@ -918,12 +930,12 @@ impl PromptTemplate {
         })
     }
 
-    /// Set the locale for i18n (returns new template, doesn't mutate).
-    pub fn with_locale(mut self, locale: &str) -> Result<Self> {
+    /// Set the locale for i18n with specified locale paths (returns new template, doesn't mutate).
+    pub fn with_locale(mut self, locale: &str, locale_paths: &[&str]) -> Result<Self> {
         self.current_locale = locale.to_string();
         
-        // Initialize locale manager - try fixtures first, then fallback
-        let locales_paths = ["tests/fixtures/locales", "locales"];
+        // Initialize locale manager - try provided paths
+        let locales_paths = get_locales_paths(locale_paths);
         for path in &locales_paths {
             if std::path::Path::new(path).exists() {
                 match LocaleManager::new(path, "en") {
@@ -1105,11 +1117,19 @@ pub struct TemplateSet {
 }
 
 impl TemplateSet {
-    /// Load all templates from a directory.
+    /// Load all templates from a directory with auto-configured locales.
+    /// 
+    /// This method automatically detects and configures locales if a `locales/` 
+    /// subdirectory exists in the template directory, addressing the biggest friction
+    /// point in template system configuration.
     pub fn from_dir<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let base_path = dir.as_ref().to_path_buf();
         let mut templates = HashMap::new();
         let mut conversations = HashMap::new();
+
+        // Auto-detect locale paths for seamless configuration
+        let auto_locale_paths = Self::detect_locale_paths(&base_path);
+        let locale_path_refs: Vec<&str> = auto_locale_paths.iter().map(|s| s.as_str()).collect();
 
         // Load regular templates
         if let Ok(entries) = fs::read_dir(&base_path) {
@@ -1117,7 +1137,13 @@ impl TemplateSet {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("md") {
                     if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        let template = PromptTemplate::load(&path)?;
+                        let mut template = PromptTemplate::load(&path)?;
+                        
+                        // Auto-configure locale if locale paths were detected
+                        if !auto_locale_paths.is_empty() {
+                            template = template.with_locale("en", &locale_path_refs)?;
+                        }
+                        
                         templates.insert(name.to_string(), template);
                     }
                 }
@@ -1132,7 +1158,13 @@ impl TemplateSet {
                     let path = entry.path();
                     if path.extension().and_then(|s| s.to_str()) == Some("md") {
                         if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            let conversation = ConversationTemplate::load(&path)?;
+                            let mut conversation = ConversationTemplate::load(&path)?;
+                            
+                            // Auto-configure locale for conversations too
+                            if !auto_locale_paths.is_empty() {
+                                conversation = conversation.with_locale("en", &locale_path_refs)?;
+                            }
+                            
                             conversations.insert(name.to_string(), conversation);
                         }
                     }
@@ -1149,16 +1181,16 @@ impl TemplateSet {
     }
 
     /// Set the locale for all templates in this set.
-    pub fn with_locale(mut self, locale: &str) -> Result<Self> {
+    pub fn with_locale(mut self, locale: &str, locale_paths: &[&str]) -> Result<Self> {
         self.current_locale = locale.to_string();
         
         // Apply locale to all templates
         for (_, template) in &mut self.templates {
-            *template = template.clone().with_locale(locale)?;
+            *template = template.clone().with_locale(locale, locale_paths)?;
         }
         
         for (_, conversation) in &mut self.conversations {
-            *conversation = conversation.clone().with_locale(locale)?;
+            *conversation = conversation.clone().with_locale(locale, locale_paths)?;
         }
         
         Ok(self)
@@ -1202,6 +1234,199 @@ impl TemplateSet {
     pub fn current_locale(&self) -> &str {
         &self.current_locale
     }
+
+    /// Create a new TemplateSet builder for advanced configuration.
+    /// 
+    /// Provides a fluent builder pattern for more control over template loading:
+    /// ```rust,no_run
+    /// use responses::prompt::template::TemplateSet;
+    /// 
+    /// let template_set = TemplateSet::builder()
+    ///     .directory("templates")
+    ///     .auto_configure_locales()  // Auto-detect locales/ subdirs
+    ///     .default_locale("en")
+    ///     .build()?;
+    /// # Ok::<(), responses::Error>(())
+    /// ```
+    pub fn builder() -> TemplateSetBuilder {
+        TemplateSetBuilder::new()
+    }
+
+    /// Detect locale paths automatically from the template directory structure.
+    /// 
+    /// This method looks for common locale directory patterns:
+    /// - `locales/` (relative to base path)
+    /// - `templates/locales/` (absolute path)
+    fn detect_locale_paths(base_path: &Path) -> Vec<String> {
+        let mut locale_paths = Vec::new();
+        
+        // Check for locales/ subdirectory in the template directory
+        let locales_dir = base_path.join("locales");
+        if locales_dir.exists() && locales_dir.is_dir() {
+            if let Some(path_str) = locales_dir.to_str() {
+                locale_paths.push(path_str.to_string());
+            }
+        }
+        
+        // Also check for ../locales (parent directory pattern)
+        let parent_locales = base_path.join("../locales");
+        if parent_locales.exists() && parent_locales.is_dir() {
+            if let Some(path_str) = parent_locales.to_str() {
+                locale_paths.push(path_str.to_string());
+            }
+        }
+        
+        locale_paths
+    }
+}
+
+/// Builder pattern for TemplateSet configuration.
+/// 
+/// Provides advanced control over template loading while maintaining
+/// the simplicity of the basic `from_dir` method for common use cases.
+#[derive(Debug)]
+pub struct TemplateSetBuilder {
+    directory: Option<PathBuf>,
+    auto_configure_locales: bool,
+    default_locale: String,
+    explicit_locale_paths: Vec<String>,
+}
+
+impl TemplateSetBuilder {
+    /// Create a new TemplateSetBuilder with default settings.
+    pub fn new() -> Self {
+        Self {
+            directory: None,
+            auto_configure_locales: false,
+            default_locale: "en".to_string(),
+            explicit_locale_paths: Vec::new(),
+        }
+    }
+
+    /// Set the template directory path.
+    pub fn directory<P: AsRef<Path>>(mut self, path: P) -> Self {
+        self.directory = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Enable automatic locale detection and configuration.
+    /// 
+    /// When enabled, the builder will automatically detect `locales/` 
+    /// subdirectories and configure i18n support.
+    pub fn auto_configure_locales(mut self) -> Self {
+        self.auto_configure_locales = true;
+        self
+    }
+
+    /// Set the default locale (defaults to "en").
+    pub fn default_locale<S: Into<String>>(mut self, locale: S) -> Self {
+        self.default_locale = locale.into();
+        self
+    }
+
+    /// Add explicit locale paths (alternative to auto-detection).
+    pub fn locale_paths<I, S>(mut self, paths: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.explicit_locale_paths.extend(paths.into_iter().map(|s| s.into()));
+        self
+    }
+
+    /// Build the configured TemplateSet.
+    pub fn build(self) -> Result<TemplateSet> {
+        let directory = self.directory.clone().ok_or_else(|| {
+            Error::Config("Template directory must be specified using .directory()".to_string())
+        })?;
+
+        let default_locale = self.default_locale.clone();
+
+        let mut template_set = if self.auto_configure_locales || !self.explicit_locale_paths.is_empty() {
+            // Use advanced configuration
+            self.build_with_locale_config(&directory)?
+        } else {
+            // Use simple configuration (existing behavior)
+            TemplateSet::from_dir(&directory)?
+        };
+
+        // Set the default locale if it's not "en"
+        if default_locale != "en" {
+            template_set.current_locale = default_locale;
+        }
+
+        Ok(template_set)
+    }
+
+    fn build_with_locale_config(self, directory: &Path) -> Result<TemplateSet> {
+        let mut templates = HashMap::new();
+        let mut conversations = HashMap::new();
+
+        // Determine locale paths
+        let locale_paths: Vec<String> = if !self.explicit_locale_paths.is_empty() {
+            self.explicit_locale_paths
+        } else if self.auto_configure_locales {
+            TemplateSet::detect_locale_paths(directory)
+        } else {
+            Vec::new()
+        };
+
+        // Load regular templates with locale configuration
+        if let Ok(entries) = fs::read_dir(directory) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                        let mut template = PromptTemplate::load(&path)?;
+                        
+                        // Configure locale if paths are available
+                        if !locale_paths.is_empty() {
+                            let locale_path_refs: Vec<&str> = locale_paths.iter().map(|s| s.as_str()).collect();
+                            template = template.with_locale(&self.default_locale, &locale_path_refs)?;
+                        }
+                        
+                        templates.insert(name.to_string(), template);
+                    }
+                }
+            }
+        }
+
+        // Load conversation templates
+        let conversations_dir = directory.join("conversations");
+        if conversations_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&conversations_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                            let mut conversation = ConversationTemplate::load(&path)?;
+                            
+                            // Configure locale for conversations
+                            if !locale_paths.is_empty() {
+                                let locale_path_refs: Vec<&str> = locale_paths.iter().map(|s| s.as_str()).collect();
+                                conversation = conversation.with_locale(&self.default_locale, &locale_path_refs)?;
+                            }
+                            
+                            conversations.insert(name.to_string(), conversation);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(TemplateSet {
+            templates,
+            conversations,
+            base_path: directory.to_path_buf(),
+            current_locale: self.default_locale,
+        })
+    }
+}
+
+impl Default for TemplateSetBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// A conversation template that renders to a Messages object.
@@ -1224,8 +1449,8 @@ impl ConversationTemplate {
     }
 
     /// Set the locale for this conversation template.
-    pub fn with_locale(mut self, locale: &str) -> Result<Self> {
-        self.template = self.template.with_locale(locale)?;
+    pub fn with_locale(mut self, locale: &str, locale_paths: &[&str]) -> Result<Self> {
+        self.template = self.template.with_locale(locale, locale_paths)?;
         Ok(self)
     }
 
@@ -1290,6 +1515,14 @@ impl ConversationTemplate {
 mod tests {
     use super::*;
     use serde_json::json;
+    
+    /// Test locale paths - only used in tests
+    const TEST_LOCALE_PATHS: &[&str] = &[
+        "tests/fixtures/locales",       // Test fixtures path
+        "locales",                      // Production path
+        "fixtures/locales",            // Alternative path
+        "../locales",                  // Relative path
+    ];
 
     #[test]
     fn test_simple_template() {
@@ -1462,7 +1695,7 @@ Great question! Let me explain {{topic}} basics for {{level}} learners."#;
     #[test]
     fn test_template_set_locale_switching() {
         let template_set = TemplateSet::from_dir("nonexistent").unwrap();
-        let localized_set = template_set.with_locale("es").unwrap();
+        let localized_set = template_set.with_locale("es", TEST_LOCALE_PATHS).unwrap();
         assert_eq!(localized_set.current_locale(), "es");
     }
 
@@ -1473,7 +1706,7 @@ Great question! Let me explain {{topic}} basics for {{level}} learners."#;
         
         // Locale manager initialization depends on locales directory existing
         // For this test, we just verify that with_locale doesn't crash
-        let localized_template = template.with_locale("es").unwrap();
+        let localized_template = template.with_locale("es", TEST_LOCALE_PATHS).unwrap();
         assert_eq!(localized_template.current_locale, "es");
         
         // In a real application with proper locales directory, locale_manager would be Some
@@ -1619,7 +1852,7 @@ Focus on optimization patterns.
 Content here."#;
 
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         
         // Should resolve to tests/fixtures/templates/shared/greeting.md
         // Expected: "{{i18n "greeting"}}\n\nThis is content from the shared greeting template."
@@ -1635,7 +1868,7 @@ Content here."#;
 {{> shared/greeting.md}}"#;
 
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = json!({ "username": "Alice" });
         let result = template.render_with_base_path(&vars, Some(PathBuf::from("tests/fixtures/templates"))).unwrap();
         
@@ -1712,7 +1945,7 @@ Content here."#;
         let content = r#"{{> system_prompt.md}}"#;
 
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
         
         let vars = json!({
             "role": "asistente",
@@ -1737,7 +1970,7 @@ Main content here.
 {{> shared/greeting.md}}"#;
 
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = json!({
             "role": "assistant",
             "domain": "software"
@@ -1778,7 +2011,7 @@ Main content here.
         let content = r#"{{i18n "system.intro" role="assistant"}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         
         // Should use fixtures/locales/en/system.yaml
         // system.intro: "You are a {role} with expertise in software development."
@@ -1791,7 +2024,7 @@ Main content here.
         let content = r#"{{i18n "system.intro" role=role}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         
         let vars = json!({ "role": "senior engineer" });
         let result = template.render(&vars).unwrap();
@@ -1804,7 +2037,7 @@ Main content here.
         
         // Test Spanish locale from fixtures/locales/es/system.yaml
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
         
         let result = template.render(&json!({})).unwrap();
         assert_eq!(result, "Eres un desarrollador con experiencia en desarrollo de software.");
@@ -1815,7 +2048,7 @@ Main content here.
         let content = r#"{{i18n "current_tasks" count=task_count tasks="tareas"}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
         
         // Should use: "Actualmente tienes {count} {tasks} pendientes de revisión."
         let vars = json!({ "task_count": 3 });
@@ -1828,7 +2061,7 @@ Main content here.
         let content = r#"{{i18n "system.intro" role=user.role}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         
         let vars = json!({ 
             "user": { "role": "architect" }
@@ -1842,13 +2075,13 @@ Main content here.
         let content = r#"{{i18n "nonexistent.key" param="value"}}"#;
         
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         
         let result = template.render(&json!({}));
         // Should now return error for missing keys instead of placeholder
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::I18nKeyNotFound { key, locale } => {
+            Error::I18nKeyNotFound { key, locale, .. } => {
                 assert_eq!(key, "nonexistent.key");
                 assert_eq!(locale, "en");
             }
@@ -1862,7 +2095,7 @@ Main content here.
         
         // Test locale fallback: es-MX → es → en
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es-MX").unwrap();
+            .with_locale("es-MX", TEST_LOCALE_PATHS).unwrap();
         
         let result = template.render(&json!({})).unwrap();
         // Should fall back to Spanish since es-MX doesn't exist
@@ -1879,13 +2112,13 @@ Main content here.
 
         // Test English fallback
         let template_en = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let result_en = template_en.render(&json!({})).unwrap();
         assert!(result_en.contains("System Instructions"));
 
         // Test Arabic locale which has text_direction: "rtl"
         let template_ar = PromptTemplate::from_content(content).unwrap()
-            .with_locale("ar").unwrap();
+            .with_locale("ar", TEST_LOCALE_PATHS).unwrap();
         let result_ar = template_ar.render(&json!({})).unwrap();
         assert!(result_ar.contains("تعليمات النظام"));
     }
@@ -1905,13 +2138,13 @@ Main content here.
         let template = PromptTemplate::from_content(content).unwrap();
         
         // Test Arabic locale
-        let arabic_template = template.clone().with_locale("ar").unwrap();
+        let arabic_template = template.clone().with_locale("ar", TEST_LOCALE_PATHS).unwrap();
         let result = arabic_template.render(&json!({})).unwrap();
         assert!(result.contains("المحتوى بالعربية"));
         assert!(!result.contains("English content"));
         
         // Test English locale
-        let english_template = template.with_locale("en").unwrap();
+        let english_template = template.with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let result = english_template.render(&json!({})).unwrap();
         assert!(!result.contains("المحتوى بالعربية"));
         assert!(result.contains("English content"));
@@ -1970,7 +2203,7 @@ Main content here.
         
         // Test different locales for number formatting
         let template_en = PromptTemplate::from_content(content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = json!({"value": 1234.56});
         let result_en = template_en.render(&vars).unwrap();
         
@@ -1979,7 +2212,7 @@ Main content here.
         
         // Could test other locales if supported
         let template_es = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
         let result_es = template_es.render(&vars).unwrap();
         // Spanish might use different separators, but for now just ensure it works
         assert!(!result_es.is_empty());
@@ -2114,7 +2347,7 @@ Status: Inactive
             .model("gpt-4o")
             .assistant_from_md("tests/fixtures/builder_test/assistant.md").unwrap()
             .var("user_name", "Alice")
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
     }
 
     #[test]
@@ -2174,7 +2407,7 @@ Status: Inactive
             .assistant_from_md("tests/fixtures/builder_test/conversation_assistant.md").unwrap()
             .var("task_type", "Rust programming")
             .var("sub_area", "concepts")
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
     }
 
     #[test]
@@ -2263,7 +2496,7 @@ System Status: {{system_status}}"#
         
         // Test with English locale
         let template = PromptTemplate::load("tests/fixtures/integration/complex_system.md").unwrap()
-            .with_locale("en").unwrap()
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap()
             .var("user_count", 1250)
             .var("task_count", 3)
             .var("completion", 0.847)
@@ -2339,7 +2572,7 @@ Let me help you with {{i18n "task_type" type=topic}}."#
             .var("advanced_mode", true)
             .var("user_level", "intermediate")
             .var("active_tasks", 7)
-            .with_locale("en").unwrap()
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap()
             .user("I need help designing a microservices architecture")
             .assistant_from_md("tests/fixtures/integration/conversations/assistant_response.md").unwrap()
             .var("topic", "microservices")
@@ -2378,7 +2611,7 @@ Load factor: {{format_number load_factor style="percent"}}"#
             .var("experience", "senior")
             .var("session_count", 12)
             .var("load_factor", 0.73)
-            .with_locale("en").unwrap()
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap()
             .user("How do I design a scalable chat system?")
             .assistant("Let me help you design a scalable chat system. We'll need to consider...")
             .user("What about real-time messaging?")
@@ -2422,7 +2655,7 @@ Progress: {{format_number completion style="percent"}}"#
         
         // Test English
         let template_en = PromptTemplate::load("tests/fixtures/integration/multi_locale.md").unwrap()
-            .with_locale("en").unwrap()
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap()
             .var("user_count", 5)
             .var("completion", 0.92);
             
@@ -2433,7 +2666,7 @@ Progress: {{format_number completion style="percent"}}"#
         
         // Test Spanish  
         let template_es = PromptTemplate::load("tests/fixtures/integration/multi_locale.md").unwrap()
-            .with_locale("es").unwrap()
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap()
             .var("user_count", 5)
             .var("completion", 0.92);
             
@@ -2455,7 +2688,7 @@ Progress: {{format_number completion style="percent"}}"#
         ).unwrap();
         
         let template = PromptTemplate::load("tests/fixtures/integration/performance/cached_template.md").unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
             
         // Test multiple renders with different variables (should be fast)
         let start = std::time::Instant::now();

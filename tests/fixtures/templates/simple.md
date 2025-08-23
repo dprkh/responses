@@ -2,7 +2,7 @@
 variables:
   role: "assistant"
   active: true
-locale_key: "system"
+i18n_key: "system"
 ---
 
 # Simple Template

@@ -3,6 +3,13 @@ mod tests {
     use responses::prompt::PromptTemplate;
     use responses::Error;
     use serde_json::json;
+    
+    const TEST_LOCALE_PATHS: &[&str] = &[
+        "tests/fixtures/locales",
+        "locales", 
+        "fixtures/locales",
+        "../locales",
+    ];
 
     #[test]
     fn test_error_on_missing_variable_not_in_required() {
@@ -94,7 +101,7 @@ variables:
         assert!(result.is_err(), "Should error when i18n key is missing");
         
         match result.unwrap_err() {
-            Error::I18nKeyNotFound { key, locale } => {
+            Error::I18nKeyNotFound { key, locale, .. } => {
                 assert_eq!(key, "nonexistent.key");
                 assert_eq!(locale, "en"); // default locale
             }
@@ -113,14 +120,14 @@ i18n_key: "system"
 {{i18n "missing.key"}} {{role}}!"#;
 
         let template = PromptTemplate::from_content(content).unwrap()
-            .with_locale("es").unwrap();
+            .with_locale("es", TEST_LOCALE_PATHS).unwrap();
         let vars = json!({});
         
         let result = template.render(&vars);
         assert!(result.is_err(), "Should error when i18n key is missing in locale");
         
         match result.unwrap_err() {
-            Error::I18nKeyNotFound { key, locale } => {
+            Error::I18nKeyNotFound { key, locale, .. } => {
                 assert_eq!(key, "missing.key");
                 assert_eq!(locale, "es");
             }

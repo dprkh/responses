@@ -207,6 +207,8 @@ impl LocaleData {
             .ok_or_else(|| Error::I18nKeyNotFound {
                 key: key.to_string(),
                 locale: self.locale.clone(),
+                template_file: None,
+                available_keys: Some(self.get_available_keys()),
             })?;
 
         let mut result = template;
@@ -271,6 +273,44 @@ impl LocaleData {
         match self.text_direction {
             TextDirection::LeftToRight => "ltr",
             TextDirection::RightToLeft => "rtl",
+        }
+    }
+
+    /// Get all available translation keys for enhanced error reporting.
+    pub fn get_available_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        self.collect_keys("", &serde_yaml::Value::Mapping(
+            self.strings.iter()
+                .map(|(k, v)| (serde_yaml::Value::String(k.clone()), v.clone()))
+                .collect()
+        ), &mut keys);
+        keys.sort();
+        keys
+    }
+
+    fn collect_keys(&self, prefix: &str, value: &serde_yaml::Value, keys: &mut Vec<String>) {
+        match value {
+            serde_yaml::Value::Mapping(map) => {
+                for (key, val) in map {
+                    if let Some(key_str) = key.as_str() {
+                        let full_key = if prefix.is_empty() {
+                            key_str.to_string()
+                        } else {
+                            format!("{}.{}", prefix, key_str)
+                        };
+                        
+                        match val {
+                            serde_yaml::Value::Mapping(_) => {
+                                self.collect_keys(&full_key, val, keys);
+                            }
+                            _ => {
+                                keys.push(full_key);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

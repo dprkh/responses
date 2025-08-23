@@ -16,6 +16,7 @@ pub struct TextRequestBuilder<'a, P: Provider> {
     // Fluent API support
     accumulated_variables: HashMap<String, serde_json::Value>,
     current_locale: Option<String>,
+    locale_paths: Vec<String>,
 }
 
 impl<'a, P: Provider> TextRequestBuilder<'a, P> {
@@ -25,6 +26,7 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
             options: Options::default(),
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -164,7 +166,7 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
     pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -175,7 +177,7 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
     pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -190,9 +192,10 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
         self
     }
 
-    /// Set the locale for template rendering (fluent API)
-    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+    /// Set the locale and locale paths for template rendering (fluent API)
+    pub fn with_locale<S: Into<String>>(mut self, locale: S, locale_paths: &[&str]) -> crate::error::Result<Self> {
         self.current_locale = Some(locale.into());
+        self.locale_paths = locale_paths.iter().map(|s| s.to_string()).collect();
         Ok(self)
     }
 
@@ -227,7 +230,7 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
     
 
     pub async fn send(self) -> Result<Response<String>> {
-        let Self { client, options, accumulated_variables, current_locale } = self;
+        let Self { client, options, accumulated_variables, current_locale, locale_paths: _ } = self;
         let mut rendered_options = options;
         
         // Render templates if any exist
@@ -248,7 +251,7 @@ impl<'a, P: Provider> TextRequestBuilder<'a, P> {
                         
                         // Apply current locale if set
                         if let Some(ref locale) = current_locale {
-                            template = template.with_locale(locale)?;
+                            template = template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
                         }
                         
                         // Render template
@@ -278,6 +281,7 @@ pub struct StructuredRequestBuilder<'a, P: Provider, T> {
     // Fluent API support
     accumulated_variables: HashMap<String, serde_json::Value>,
     current_locale: Option<String>,
+    locale_paths: Vec<String>,
 }
 
 impl<'a, P: Provider, T> StructuredRequestBuilder<'a, P, T> 
@@ -292,6 +296,7 @@ where
             _phantom: std::marker::PhantomData,
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -410,7 +415,7 @@ where
     pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -421,7 +426,7 @@ where
     pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -436,9 +441,10 @@ where
         self
     }
 
-    /// Set the locale for template rendering (fluent API)
-    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+    /// Set the locale and locale paths for template rendering (fluent API)
+    pub fn with_locale<S: Into<String>>(mut self, locale: S, locale_paths: &[&str]) -> crate::error::Result<Self> {
         self.current_locale = Some(locale.into());
+        self.locale_paths = locale_paths.iter().map(|s| s.to_string()).collect();
         Ok(self)
     }
 
@@ -494,7 +500,7 @@ where
                         
                         // Apply current locale if set
                         if let Some(ref locale) = current_locale {
-                            template = template.with_locale(locale)?;
+                            template = template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
                         }
                         
                         // Render template

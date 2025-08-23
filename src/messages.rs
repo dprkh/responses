@@ -23,12 +23,13 @@ use std::collections::HashMap;
 /// 
 /// println!("Conversation has {} messages", history.len());
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Messages {
     messages: Vec<Input>,
     // Fluent API support
     accumulated_variables: HashMap<String, serde_json::Value>,
     current_locale: Option<String>,
+    locale_paths: Vec<String>,
 }
 
 impl Messages {
@@ -38,6 +39,7 @@ impl Messages {
             messages: Vec::new(),
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -125,6 +127,7 @@ impl Messages {
             messages: inputs,
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -137,6 +140,7 @@ impl Messages {
             messages: inputs,
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -161,7 +165,7 @@ impl Messages {
                     // Apply accumulated variables and render the template
                     let template_with_vars = Self::apply_accumulated_variables_static(&self.accumulated_variables, template_input.template.clone());
                     let template_with_locale = if let Some(ref locale) = self.current_locale {
-                        template_with_vars.clone().with_locale(locale).unwrap_or(template_with_vars)
+                        template_with_vars.clone().with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>()).unwrap_or(template_with_vars)
                     } else {
                         template_with_vars
                     };
@@ -213,6 +217,7 @@ impl Messages {
             messages: self.messages[start..].to_vec(),
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -223,6 +228,7 @@ impl Messages {
             messages: self.messages[..end].to_vec(),
             accumulated_variables: HashMap::new(),
             current_locale: None,
+            locale_paths: Vec::new(),
         }
     }
     
@@ -271,7 +277,7 @@ impl Messages {
     pub fn system_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -282,7 +288,7 @@ impl Messages {
     pub fn assistant_from_md<PathType: AsRef<std::path::Path>>(self, path: PathType) -> crate::error::Result<Self> {
         let template = crate::prompt::PromptTemplate::load(path)?;
         let template = if let Some(ref locale) = self.current_locale {
-            template.with_locale(locale)?
+            template.with_locale(locale, &self.locale_paths.iter().map(|s| s.as_str()).collect::<Vec<_>>())?
         } else {
             template
         };
@@ -298,8 +304,9 @@ impl Messages {
     }
 
     /// Set the locale for template rendering (fluent API)
-    pub fn with_locale<S: Into<String>>(mut self, locale: S) -> crate::error::Result<Self> {
+    pub fn with_locale<S: Into<String>>(mut self, locale: S, locale_paths: &[&str]) -> crate::error::Result<Self> {
         self.current_locale = Some(locale.into());
+        self.locale_paths = locale_paths.iter().map(|s| s.to_string()).collect();
         Ok(self)
     }
 
@@ -330,6 +337,11 @@ impl Messages {
     }
 }
 
+impl Default for Messages {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Convenience function to create a new Messages builder.
 pub fn messages() -> Messages {

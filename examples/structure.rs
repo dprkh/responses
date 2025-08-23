@@ -1,7 +1,8 @@
 use dotenv::dotenv;
 use responses::{azure, Client};
 use responses::provider::ProviderBuilder;
-use schemars::JsonSchema;
+// Use the re-exported schemars to avoid version conflicts
+use responses::schemars::JsonSchema;
 use serde::Deserialize;
 
 #[derive(Clone, Debug, JsonSchema, Deserialize)]

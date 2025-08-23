@@ -5,6 +5,13 @@ mod template_integration_tests {
     use responses::prompt::template::{PromptTemplate, TemplateSet, ConversationTemplate};
     use responses::Messages;
     use serde_json::json;
+    
+    const TEST_LOCALE_PATHS: &[&str] = &[
+        "tests/fixtures/locales",
+        "locales", 
+        "fixtures/locales",
+        "../locales",
+    ];
 
     #[test]
     fn test_prompt_template_basic_workflow() {
@@ -208,7 +215,7 @@ Main content
 {{> shared/greeting.md}}"#;
         
         let template = PromptTemplate::from_content(template_content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = serde_json::json!({"name": "Alice"});
         
         // This should resolve shared/greeting.md relative to the base path
@@ -274,7 +281,7 @@ Main content for {{user_name}}.
 {{> shared/footer.md}}"#;
 
         let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = serde_json::json!({"user_name": "Bob", "locale": "en", "version": "1.0.0"});
         
         // With auto-loading, includes should be preloaded and available
@@ -340,7 +347,7 @@ i18n_key: "system.title"
 {{i18n "system.title"}}: Welcome to our {{greeting_type}} system."#;
 
         let template = responses::prompt::template::PromptTemplate::from_content(template_content).unwrap()
-            .with_locale("en").unwrap();
+            .with_locale("en", TEST_LOCALE_PATHS).unwrap();
         let vars = serde_json::json!({"greeting_type": "professional"});
         
         // Should render with appropriate locale-based content
@@ -361,7 +368,7 @@ i18n_key: "system.title"
         
         if let Ok(template_set) = result {
             // Test that TemplateSet can switch locales for i18n_key templates
-            let spanish_set = template_set.with_locale("es"); // Switch to Spanish
+            let spanish_set = template_set.with_locale("es", TEST_LOCALE_PATHS); // Switch to Spanish
             
             if let Ok(spanish_template_set) = spanish_set {
                 // Template with i18n_key should use Spanish locale
@@ -389,7 +396,7 @@ Fallback content: {{i18n "nonexistent.key"}}"#;
         assert!(result.is_err());
         
         match result.unwrap_err() {
-            responses::Error::I18nKeyNotFound { key, locale } => {
+            responses::Error::I18nKeyNotFound { key, locale, .. } => {
                 assert_eq!(key, "nonexistent.key");
                 assert_eq!(locale, "en"); // default locale
             }

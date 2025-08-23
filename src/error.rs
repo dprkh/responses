@@ -43,8 +43,16 @@ pub enum Error {
     #[error("Locale not found: {locale}\nHelp: Ensure the locale directory exists at locales/{locale}/ with the required YAML files.")]
     LocaleNotFound { locale: String },
     
-    #[error("i18n key not found: {key} in locale {locale}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml")]
-    I18nKeyNotFound { key: String, locale: String },
+    #[error("i18n key not found: {key} in locale {locale}{}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml{}", 
+        template_file.as_ref().map(|f| format!(" (in template: {})", f)).unwrap_or_default(),
+        available_keys.as_ref().map(|keys| format!("\nAvailable keys: [{}]", keys.join(", "))).unwrap_or_default()
+    )]
+    I18nKeyNotFound { 
+        key: String, 
+        locale: String,
+        template_file: Option<String>,
+        available_keys: Option<Vec<String>>,
+    },
     
     #[error("Task join error: {0}")]
     Join(#[from] tokio::task::JoinError),

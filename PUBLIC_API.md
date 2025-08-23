@@ -39,6 +39,9 @@ Add this to your `Cargo.toml`:
 responses = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["rt", "macros"] }
+
+# Note: schemars is re-exported by responses to prevent version conflicts
+# Use responses::schemars instead of adding a separate schemars dependency
 ```
 
 Set up environment variables for Azure OpenAI:
@@ -274,7 +277,8 @@ The `StructuredRequestBuilder` provides type-safe structured outputs using JSON 
 
 ```rust
 use serde::{Deserialize};
-use schemars::JsonSchema;
+// Use the re-exported schemars to avoid version conflicts
+use responses::schemars::JsonSchema;
 
 #[derive(Clone, Debug, JsonSchema, Deserialize)]
 struct WeatherResponse {
@@ -284,6 +288,8 @@ struct WeatherResponse {
     location: String,
 }
 ```
+
+**Note**: `schemars` is re-exported by the `responses` crate to prevent dependency version conflicts. Always use `responses::schemars` instead of adding a separate `schemars` dependency to your `Cargo.toml`.
 
 #### Basic Structured Request
 
@@ -1142,7 +1148,7 @@ let template = PromptTemplate::load("prompts/system.md")?
 
 ### Template Set Management
 
-The `TemplateSet` provides enterprise-grade template management with organized directory structures, base path resolution, and locale switching.
+The `TemplateSet` provides enterprise-grade template management with organized directory structures, base path resolution, automatic locale detection, and seamless i18n support.
 
 #### TemplateSet API
 
@@ -1150,13 +1156,19 @@ The `TemplateSet` provides enterprise-grade template management with organized d
 impl TemplateSet {
     // === CREATION AND LOADING ===
     
-    /// Load all templates from a directory
+    /// Load all templates from a directory with automatic locale detection
+    /// 
+    /// Automatically detects and configures locales if a `locales/` 
+    /// subdirectory exists, eliminating manual configuration.
     pub fn from_dir<P: AsRef<Path>>(dir: P) -> Result<Self>;
+    
+    /// Create a builder for advanced template set configuration
+    pub fn builder() -> TemplateSetBuilder;
     
     // === LOCALE MANAGEMENT ===
     
     /// Switch locale for all templates in the set
-    pub fn with_locale(mut self, locale: &str) -> Result<Self>;
+    pub fn with_locale(mut self, locale: &str, locale_paths: &[&str]) -> Result<Self>;
     
     /// Get current locale
     pub fn current_locale(&self) -> &str;
@@ -1182,6 +1194,38 @@ impl TemplateSet {
     
     /// Check if a conversation template exists
     pub fn conversation_exists(&self, name: &str) -> bool;
+}
+```
+
+#### TemplateSetBuilder API
+
+The builder pattern provides advanced control over template loading while maintaining simplicity for common use cases.
+
+```rust
+impl TemplateSetBuilder {
+    /// Create a new builder with default settings
+    pub fn new() -> Self;
+    
+    /// Set the template directory path
+    pub fn directory<P: AsRef<Path>>(self, path: P) -> Self;
+    
+    /// Enable automatic locale detection and configuration
+    /// 
+    /// When enabled, automatically detects `locales/` subdirectories 
+    /// and configures i18n support without manual configuration.
+    pub fn auto_configure_locales(self) -> Self;
+    
+    /// Set the default locale (defaults to "en")
+    pub fn default_locale<S: Into<String>>(self, locale: S) -> Self;
+    
+    /// Add explicit locale paths (alternative to auto-detection)
+    pub fn locale_paths<I, S>(self, paths: I) -> Self 
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>;
+    
+    /// Build the configured TemplateSet
+    pub fn build(self) -> Result<TemplateSet>;
 }
 ```
 
@@ -1219,9 +1263,29 @@ templates/
 use responses::prompt::TemplateSet;
 use std::path::PathBuf;
 
-// === LOADING TEMPLATE SETS ===
+// === AUTOMATIC LOCALE DETECTION ===
 
+// Simple usage - automatically detects locales/ subdirectory
 let template_set = TemplateSet::from_dir("templates")?;
+// If templates/locales/ exists, i18n is automatically configured!
+
+// === ADVANCED CONFIGURATION WITH BUILDER ===
+
+// For more control, use the builder pattern
+let template_set = TemplateSet::builder()
+    .directory("templates")
+    .auto_configure_locales()  // Auto-detect locales/ subdirs
+    .default_locale("en")
+    .build()?;
+
+// Or specify explicit locale paths
+let template_set = TemplateSet::builder()
+    .directory("templates") 
+    .locale_paths(["templates/locales", "locales"])
+    .default_locale("fr")
+    .build()?;
+
+// === TEMPLATE DISCOVERY ===
 
 // List available templates
 let templates = template_set.list_templates();
@@ -1239,8 +1303,8 @@ let rendered = template_set.render("system_prompts/coding_assistant", &vars)?;
 
 // === LOCALE SWITCHING ===
 
-// Switch to Spanish locale for all templates
-let spanish_set = template_set.with_locale("es")?;
+// Switch to Spanish locale for all templates (manual path specification)
+let spanish_set = template_set.with_locale("es", &["templates/locales"])?;
 let spanish_rendered = spanish_set.render("system_prompts/coding_assistant", &vars)?;
 
 // === CONVERSATION TEMPLATES ===
@@ -1753,8 +1817,14 @@ match template.render(&vars) {
         eprintln!("Missing variable: {}", name);
         // Provide the missing variable and retry
     }
-    Err(Error::I18nKeyNotFound { key, locale }) => {
+    Err(Error::I18nKeyNotFound { key, locale, template_file, available_keys }) => {
         eprintln!("Missing i18n key '{}' in locale '{}'", key, locale);
+        if let Some(file) = template_file {
+            eprintln!("  Template: {}", file);
+        }
+        if let Some(keys) = available_keys {
+            eprintln!("  Available keys: {}", keys.join(", "));
+        }
         // Add the key to your locale files
     }
     Err(e) => eprintln!("Template error: {}", e),
@@ -1808,8 +1878,16 @@ pub enum Error {
     #[error("Locale not found: {locale}\nHelp: Ensure the locale directory exists at locales/{locale}/ with the required YAML files.")]
     LocaleNotFound { locale: String },
     
-    #[error("i18n key not found: {key} in locale {locale}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml")]
-    I18nKeyNotFound { key: String, locale: String },
+    #[error("i18n key not found: {key} in locale {locale}{}\nHelp: Add the key '{key}' to your locale file at locales/{locale}/*.yaml{}", 
+        template_file.as_ref().map(|f| format!(" (in template: {})", f)).unwrap_or_default(),
+        available_keys.as_ref().map(|keys| format!("\nAvailable keys: [{}]", keys.join(", "))).unwrap_or_default()
+    )]
+    I18nKeyNotFound { 
+        key: String, 
+        locale: String,
+        template_file: Option<String>,
+        available_keys: Option<Vec<String>>,
+    },
     
     #[error("Function call parameter parsing failed for '{function_name}': {source}")]
     FunctionParameterParsing { 
@@ -1829,16 +1907,39 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ### Response Handling
 
-The `Response<T>` structure provides direct access to response data and function calls:
+The `Response<T>` structure provides direct access to response data and function calls. Both text responses and function calls are equally valid response types - function-only responses are normal behavior, not error conditions.
 
 ```rust
 #[derive(Clone, Debug)]
 pub struct Response<T> {
-    /// The main response message - can be successful result, refusal, or None
+    /// The text response from the model (can be `None` for function-only responses)
     pub message: Option<Result<T, Refusal>>,
     
-    /// Any function calls requested by the model
+    /// Function calls requested by the model
     pub function_calls: Vec<OutputFunctionCall>,
+}
+
+impl<T> Response<T> {
+    /// Returns true if the response contains a text message
+    pub fn has_text_message(&self) -> bool;
+    
+    /// Returns true if the response contains function calls
+    pub fn has_function_calls(&self) -> bool;
+    
+    /// Returns true if this is a function-only response (normal behavior)
+    pub fn is_function_only(&self) -> bool;
+    
+    /// Returns true if response contains both text and function calls
+    pub fn has_both_text_and_functions(&self) -> bool;
+    
+    /// Get a reference to the successful text message, if it exists
+    pub fn text_message(&self) -> Option<&T>;
+    
+    /// Get a reference to the refusal, if the message was refused
+    pub fn refusal(&self) -> Option<&Refusal>;
+    
+    /// Get the number of function calls in this response
+    pub fn function_call_count(&self) -> usize;
 }
 ```
 
@@ -1852,19 +1953,28 @@ let response = client
     .send()
     .await?;
 
-// Direct field access
-match response.message {
-    Some(Ok(text)) => println!("Success: {}", text),
-    Some(Err(refusal)) => println!("Model refused: {}", refusal),
-    None => println!("No response generated"),
+// Using new helper methods for clearer response handling
+if let Some(text) = response.text_message() {
+    println!("✅ Text response: {}", text);
+} else if let Some(refusal) = response.refusal() {
+    println!("❌ Model refused: {}", refusal);
+} else if response.is_function_only() {
+    println!("🔧 Function-only response (normal behavior)");
+} else {
+    println!("ℹ️ Empty response");
 }
 
 // Check for function calls
-if !response.function_calls.is_empty() {
-    println!("Model requested {} function calls", response.function_calls.len());
-    for call in response.function_calls {
+if response.has_function_calls() {
+    println!("🚀 Model requested {} function calls", response.function_call_count());
+    for call in &response.function_calls {
         println!("Function: {} with args: {}", call.name, call.arguments);
     }
+}
+
+// Handle mixed responses (both text and functions)
+if response.has_both_text_and_functions() {
+    println!("📝 Response contains both text and function calls");
 }
 ```
 
