@@ -48,7 +48,7 @@ pub use client::Client;
 
 pub use providers::*;
 
-pub use builders::azure;
+pub use builders::{azure, openai};
 
 pub use messages::{Messages, messages};
 

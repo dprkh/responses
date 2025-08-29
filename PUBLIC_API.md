@@ -1,12 +1,13 @@
 # Responses API Documentation
 
-Rust library for Azure OpenAI's Responses API with fluent DSL, templates, and structured outputs.
+Rust library for OpenAI's Responses API with fluent DSL, templates, and structured outputs. Supports both Azure OpenAI and plain OpenAI providers.
 
 ## Table of Contents
 
 - [Getting Started](#getting-started)
 - [Client Setup](#client-setup)
   - [Azure Configuration](#azure-configuration)
+  - [OpenAI Configuration](#openai-configuration)
 - [Core APIs](#core-apis)
   - [Text Generation](#text-generation)
   - [Structured Outputs](#structured-outputs)
@@ -52,10 +53,16 @@ tokio = { version = "1.0", features = ["rt", "macros"] }
 Environment variables:
 
 ```bash
+# For Azure OpenAI
 export AZURE_OPENAI_API_KEY="your-api-key"
 export AZURE_OPENAI_RESOURCE="your-resource-name"
 export AZURE_OPENAI_API_VERSION="2025-03-01-preview"
-export RESPONSES_LOCALES_PATH="custom/locales/path,another/path"  # Optional
+
+# For OpenAI
+export OPENAI_API_KEY="sk-your-api-key-here"
+
+# Optional
+export RESPONSES_LOCALES_PATH="custom/locales/path,another/path"
 ```
 
 ## Client Setup
@@ -110,6 +117,40 @@ let provider = azure()
     .build()?;
 ```
 
+### OpenAI Configuration
+
+```rust
+use responses::{openai, Client};
+use responses::provider::ProviderBuilder;
+
+#[tokio::main]
+async fn main() -> responses::Result<()> {
+    let provider = openai()
+        .from_env()?
+        .build()?;
+    let client = Client::new(provider);
+    
+    // Use client for requests...
+    Ok(())
+}
+```
+
+**OpenAI Configuration options:**
+```rust
+// From environment
+let provider = openai().from_env()?.build()?;
+
+// Manual config  
+let config = OpenAIConfig {
+    api_key: "sk-your-api-key-here".to_string(),
+};
+let provider = openai().with_config(config).build()?;
+
+// Builder pattern
+let provider = openai()
+    .api_key("sk-your-api-key-here")
+    .build()?;
+
 ## Core APIs
 
 ### Text Generation
@@ -119,6 +160,10 @@ use responses::{azure, Client};
 use responses::provider::ProviderBuilder;
 
 let provider = azure().from_env()?.build()?;
+let client = Client::new(provider);
+
+// Or with OpenAI
+let provider = openai().from_env()?.build()?;
 let client = Client::new(provider);
 
 let response = client
@@ -534,6 +579,10 @@ use responses::prompt::PromptTemplate;
 
 let provider = azure().from_env()?.build()?;
 let client = Client::new(provider);
+
+// Works with OpenAI too
+// let provider = openai().from_env()?.build()?;
+// let client = Client::new(provider);
 
 // Simple template loading
 let response = client
@@ -1386,6 +1435,10 @@ use responses::{azure, Judge, Messages, Client};
 let provider = azure().from_env()?.build()?;
 let client = Client::new(provider);
 
+// Works with OpenAI too
+// let provider = openai().from_env()?.build()?;
+// let client = Client::new(provider);
+
 // Create judge and configure with custom evaluation prompt (users should tailor for their use-case)
 let judge = Judge::new(client, "gpt-4o")
     .with_prompt(r#"You are a software developer reviewing code and responses. 
@@ -1970,6 +2023,10 @@ async fn main() -> responses::Result<()> {
     let provider = azure().from_env()?.build()?;
     let client = Client::new(provider);
     
+    // Works with OpenAI too
+    // let provider = openai().from_env()?.build()?;
+    // let client = Client::new(provider);
+    
     let conversation = Messages::new()
         .system("You are a helpful programming mentor")
         .user("I'm learning Rust. What are the key concepts I should focus on?")
@@ -2010,6 +2067,10 @@ struct CodeAnalysis {
 async fn main() -> responses::Result<()> {
     let provider = azure().from_env()?.build()?;
     let client = Client::new(provider);
+    
+    // Works with OpenAI too
+    // let provider = openai().from_env()?.build()?;
+    // let client = Client::new(provider);
     
     let analysis = client
         .structured::<CodeAnalysis>()
@@ -2624,14 +2685,191 @@ This comprehensive example demonstrates:
 - **🛡️ Error Handling**: Comprehensive validation with helpful error messages
 - **🔄 Fluent Integration**: Seamless integration with Messages API and client requests
 
+### Complete OpenAI Provider Example
+
+This example demonstrates using the OpenAI provider with all the same features as Azure OpenAI.
+
+```rust
+use responses::{openai, Client, Messages};
+use responses::schemars::JsonSchema;
+use serde::Deserialize;
+
+#[derive(Clone, Debug, JsonSchema, Deserialize)]
+struct TaskAnalysis {
+    priority: String,
+    estimated_hours: f64,
+    dependencies: Vec<String>,
+    risk_level: String,
+}
+
+#[tokio::main]
+async fn main() -> responses::Result<()> {
+    // === OPENAI PROVIDER SETUP ===
+    
+    // From environment variable (OPENAI_API_KEY)
+    let provider = openai()
+        .from_env()?
+        .build()?;
+    let client = Client::new(provider);
+    
+    // Or with explicit API key
+    // let provider = openai()
+    //     .api_key("sk-your-api-key-here")
+    //     .build()?;
+    // let client = Client::new(provider);
+    
+    // === TEXT GENERATION ===
+    
+    let conversation = Messages::new()
+        .system("You are a project management assistant")
+        .user("I need to implement user authentication in my web app");
+    
+    let text_response = client
+        .text()
+        .model("gpt-4")  // OpenAI model names
+        .messages(conversation.clone())
+        .temperature(0.7)
+        .send()
+        .await?;
+    
+    if let Some(Ok(text)) = text_response.message {
+        println!("🤖 OpenAI Response: {}", text);
+    }
+    
+    // === STRUCTURED OUTPUT ===
+    
+    let structured_response = client
+        .structured::<TaskAnalysis>()
+        .model("gpt-4")
+        .system("Analyze project tasks and provide structured breakdown")
+        .user("Analyze the task: 'Implement user authentication with JWT tokens, password reset, and email verification'")
+        .temperature(0.3)
+        .send()
+        .await?;
+    
+    if let Some(Ok(analysis)) = structured_response.message {
+        println!("📊 Task Analysis:");
+        println!("  Priority: {}", analysis.priority);
+        println!("  Estimated Hours: {}", analysis.estimated_hours);
+        println!("  Risk Level: {}", analysis.risk_level);
+        println!("  Dependencies: {:?}", analysis.dependencies);
+    }
+    
+    // === TEMPLATE INTEGRATION ===
+    
+    // Templates work identically with OpenAI
+    let template_response = client
+        .text()
+        .model("gpt-4")
+        .system_from_md("prompts/project_manager.md")?
+        .var("project_type", "web application")
+        .var("tech_stack", "React + Node.js")
+        .var("team_size", 3)
+        .user("What's the best approach for implementing real-time features?")
+        .send()
+        .await?;
+    
+    // === FUNCTION CALLING ===
+    
+    use responses::{tool, types::ToolChoice};
+    
+    #[tool]
+    /// Estimate project timeline based on complexity
+    async fn estimate_timeline(
+        task_description: String,
+        complexity: String, // low, medium, high
+        team_size: i32,
+    ) -> responses::Result<String> {
+        let base_hours = match complexity.as_str() {
+            "low" => 20,
+            "medium" => 50,
+            "high" => 120,
+            _ => 40,
+        };
+        
+        let adjusted_hours = base_hours / team_size.max(1);
+        Ok(format!("Estimated timeline: {} hours for '{}' (complexity: {})", 
+                  adjusted_hours, task_description, complexity))
+    }
+    
+    let function_response = client
+        .text()
+        .model("gpt-4")
+        .system("You help estimate project timelines. Use the estimation tool when asked about timelines.")
+        .user("How long would it take to implement a user dashboard with data visualization?")
+        .tools(vec![estimate_timeline_handler()])
+        .tool_choice(ToolChoice::Auto)
+        .send()
+        .await?;
+    
+    // Handle function calls
+    let timeline_handler = estimate_timeline_handler();
+    for function_call in function_response.function_calls {
+        if let Some(result) = timeline_handler.invoke(&function_call).await? {
+            println!("⏱️ Timeline Estimate: {}", result);
+        }
+    }
+    
+    // === LLM-AS-A-JUDGE WITH OPENAI ===
+    
+    use responses::Judge;
+    
+    let judge = Judge::new(client.clone(), "gpt-4")
+        .with_prompt("You are an expert software architect. Evaluate whether technical solutions are well-designed and follow best practices.")
+        .with_temperature(0.1);
+    
+    let evaluation_conversation = Messages::new()
+        .system("You are a senior developer")
+        .user("Should I use microservices for a small e-commerce site with 3 developers?");
+    
+    let eval_response = client
+        .text()
+        .model("gpt-4")
+        .messages(evaluation_conversation.clone())
+        .send()
+        .await?;
+    
+    let judgment = judge.evaluate(
+        &evaluation_conversation,
+        &eval_response,
+        "Should provide appropriate architectural guidance considering team size and project scale"
+    ).await?;
+    
+    println!("🧑‍⚖️ Evaluation Result: {}", if judgment.passes { "PASS" } else { "FAIL" });
+    println!("📝 Reasoning: {}", judgment.reasoning);
+    
+    Ok(())
+}
+```
+
+**Key differences when using OpenAI vs Azure OpenAI:**
+
+- **Endpoint**: Fixed to `https://api.openai.com/v1/responses`
+- **Authentication**: Uses `Bearer` token instead of `api-key` header
+- **Configuration**: Only requires API key (no resource/version parameters)
+- **Model names**: Use OpenAI model names (`gpt-4`, `gpt-4-turbo`, etc.)
+- **Same API**: All other functionality (templates, structured outputs, tools, judge) works identically
+
+**Environment Setup:**
+```bash
+# Set your OpenAI API key
+export OPENAI_API_KEY="sk-your-api-key-here"
+
+# All other environment variables work the same
+export RESPONSES_LOCALES_PATH="templates/locales"
+```
+
 ---
 
 This documentation covers the complete public API surface of the responses library, including:
 
+- **🌐 Dual Provider Support**: Both Azure OpenAI and plain OpenAI with identical APIs
 - **🎯 LLM-as-a-Judge**: Automated evaluation of LLM outputs with template support and i18n
 - **🌡️ Temperature Control**: Fine-grained control over response randomness across all builders  
 - **🔧 Enhanced Function Calling**: Streamlined function definition and execution with `#[tool]` macro
 - **📝 Flexible Template System**: Markdown templates with variables, i18n, and composition
 - **💬 Fluent Conversation Management**: Builder patterns for complex multi-turn interactions
+
+The library provides a unified interface for both providers, so you can switch between Azure OpenAI and OpenAI with minimal code changes - just swap the provider configuration while keeping all other functionality identical.
 
 For more examples, check the `examples/` directory in the repository.
